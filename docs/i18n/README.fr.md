@@ -20,7 +20,7 @@ Lis ce dépôt GitHub, installe-le et déploie-le pour moi, puis guide-moi pas �
 - Seul l’agent propriétaire peut modifier ou supprimer logiquement son souvenir
 - Discussions directes ou globales avec messages ajoutés sans écrasement
 - Identifiants gérés avec scopes, expiration, révocation et rotation
-- SQLite par défaut ; PostgreSQL et recherche sémantique pgvector en option
+- SQLite par défaut (recherche vectorielle hors ligne activée) ; PostgreSQL + pgvector en option
 
 ## Démarrage local
 
@@ -142,6 +142,6 @@ Migrations PostgreSQL :
 DATABASE_URL='postgresql+psycopg://user:password@host:5432/allmemory' alembic upgrade head
 ```
 
-La recherche sémantique nécessite PostgreSQL + pgvector, `EMBEDDING_PROVIDER=openai` et `OPENAI_API_KEY`. Les détails figurent dans le [README anglais](../../README.md). Utilisez HTTPS pour tout accès distant. OAuth/OIDC n’est pas encore implémenté.
+La recherche vectorielle est activée par défaut : des embeddings locaux hors ligne, sans clé API, fonctionnent avec SQLite. Pour de vrais vecteurs sémantiques, définissez `EMBEDDING_PROVIDER=openai` et `OPENAI_API_KEY` (ou un endpoint compatible OpenAI) ; PostgreSQL + pgvector utilise alors HNSW. Les détails figurent dans le [README anglais](../../README.md). Utilisez HTTPS pour tout accès distant. OAuth/OIDC n’est pas encore implémenté.
 
 Ce projet est distribué sous [licence MIT](../../LICENSE).

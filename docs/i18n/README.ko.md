@@ -19,7 +19,7 @@
 - 테넌트 격리, 업로더 표시, 소유자만 수정/소프트 삭제
 - 직접/전체 협의 스레드와 추가 전용 메시지
 - scope, 만료, 폐기, 교체를 지원하는 관리형 자격 증명
-- SQLite 기본 지원, PostgreSQL 및 pgvector 의미 검색 선택 지원
+- SQLite 기본 지원(오프라인 벡터 검색 기본 활성화), PostgreSQL + pgvector 의미 검색 선택 지원
 
 ## 로컬 시작
 
@@ -141,6 +141,6 @@ PostgreSQL 마이그레이션:
 DATABASE_URL='postgresql+psycopg://user:password@host:5432/allmemory' alembic upgrade head
 ```
 
-의미 검색은 PostgreSQL + pgvector와 `EMBEDDING_PROVIDER=openai`, `OPENAI_API_KEY`가 필요합니다. 추가 설정과 API는 [영문 README](../../README.md)를 참고하세요. 외부 서비스는 HTTPS를 사용하세요. OAuth/OIDC는 아직 구현되지 않았습니다.
+벡터 검색은 기본 활성화이며, API 키 없이 동작하는 로컬 임베딩이 SQLite에서 작동합니다. 실제 의미 벡터가 필요하면 `EMBEDDING_PROVIDER=openai`와 `OPENAI_API_KEY`(또는 OpenAI 호환 엔드포인트)를 설정하세요. 추가 설정과 API는 [영문 README](../../README.md)를 참고하세요. 외부 서비스는 HTTPS를 사용하세요. OAuth/OIDC는 아직 구현되지 않았습니다.
 
 본 프로젝트는 [MIT License](../../LICENSE)에 따라 배포됩니다.

@@ -255,7 +255,9 @@
   function renderTypeFilters() {
     const holder = $("type-filters");
     holder.replaceChildren();
-    const counts = countBy(state.items.map((m) => m.memory_type || "fact"));
+    const displayKind = (item) => item.memory_layer && item.memory_layer !== "legacy"
+      ? item.memory_layer : (item.memory_type || "fact");
+    const counts = countBy(state.items.map(displayKind));
     const types = Array.from(counts.keys()).sort((a, b) => counts.get(b) - counts.get(a) || a.localeCompare(b));
 
     const all = el("button", `filter-chip${state.typeFilter === null ? " active" : ""}`, "All");
@@ -309,7 +311,12 @@
     const meta = el("div", "meta-grid");
     const rows = [
       ["Source agent", item.owner_agent_id || "Unknown", false],
+      ["Memory layer", item.memory_layer || "legacy", false],
       ["Type", item.memory_type || "fact", false],
+      ...(item.category ? [["Category", item.category, false]] : []),
+      ...(item.event_key ? [["Event key", item.event_key, true]] : []),
+      ...(item.occurred_at ? [["Occurred at", dateLabel(item.occurred_at), false]] : []),
+      ...(item.source_watermark ? [["Source watermark", item.source_watermark, false]] : []),
       ["Created", dateLabel(item.created_at), false],
       ["Last updated", dateLabel(item.updated_at), false],
       ["Version", `v${item.version ?? 1}`, false],
@@ -362,7 +369,11 @@
   function visibleItems() {
     return state.typeFilter === null
       ? state.items
-      : state.items.filter((item) => (item.memory_type || "fact") === state.typeFilter);
+      : state.items.filter((item) => {
+        const kind = item.memory_layer && item.memory_layer !== "legacy"
+          ? item.memory_layer : (item.memory_type || "fact");
+        return kind === state.typeFilter;
+      });
   }
 
   function renderList() {
@@ -371,7 +382,9 @@
     const items = visibleItems();
 
     items.forEach((item, index) => {
-      const palette = paletteFor(item.memory_type);
+      const kind = item.memory_layer && item.memory_layer !== "legacy"
+        ? item.memory_layer : (item.memory_type || "fact");
+      const palette = paletteFor(kind);
       const card = el("article", `memory-card${item.id === state.selectedId ? " selected" : ""}`);
       card.tabIndex = 0;
       card.setAttribute("role", "button");
@@ -381,7 +394,7 @@
 
       const top = el("div", "card-top");
       const topLeft = el("div", "card-top-left");
-      const badge = el("span", "type-badge", item.memory_type || "fact");
+      const badge = el("span", "type-badge", kind);
       badge.style.setProperty("--badge-color", palette.fg);
       badge.style.setProperty("--badge-bg", palette.bg);
       topLeft.append(badge, el("span", "version-badge", `v${item.version ?? 1}`));
@@ -390,6 +403,14 @@
       top.append(topLeft, date);
 
       const content = el("div", "card-content", item.content || "(no content)");
+      const cardBody = el("div", "card-body");
+      if (item.title) cardBody.append(el("strong", "card-heading", item.title));
+      if (item.category || item.event_key || item.occurred_at) {
+        const context = [item.category, item.event_key, item.occurred_at && dateLabel(item.occurred_at)]
+          .filter(Boolean).join(" · ");
+        cardBody.append(el("span", "card-context", context));
+      }
+      cardBody.append(content);
       const bottom = el("div", "card-bottom");
       const source = el("div", "source-chip");
       const avatar = el("span", "source-avatar", initials(item.owner_agent_id));
@@ -400,7 +421,7 @@
       if ((item.tags || []).length > 3) addTag(tags, `+${item.tags.length - 3}`, "tag more");
       bottom.append(source, tags);
 
-      card.append(top, content, bottom);
+      card.append(top, cardBody, bottom);
       const select = () => {
         state.selectedId = item.id;
         document.querySelectorAll(".memory-card.selected").forEach((node) => node.classList.remove("selected"));

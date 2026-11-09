@@ -51,15 +51,15 @@ Runtime modules stay at the project root because the documented local and contai
 
 ## Project status
 
-**Pre-1.0 / experimental** (API version `0.3.0`, November 2026). The core service is implemented and scripted checks pass on SQLite, but several paths have not been exercised against real infrastructure. Please read this before deploying to production.
+**Pre-1.0 / experimental** (API version `0.4.0`, November 2026). The three memory layers, offline vector retrieval, context assembly and reindexing are covered by scripted SQLite checks. PostgreSQL + pgvector, remote embedding providers and a live MCP handshake remain untested. Please read this before deploying to production.
 
 | Verified by execution (2026-11-09) | Not yet exercised |
 |---|---|
-| Memory CRUD, ownership rejection, soft deletion, audit records | PostgreSQL backend and the pgvector / HNSW path |
-| Two-tenant isolation across reads, writes, threads and messages | OpenAI embedding calls (code path only) |
-| Managed credentials: issue, verify, revoke, rotate, read-only scope | MCP handshake over Streamable HTTP and stdio |
-| REST routes via FastAPI `TestClient`, including 401/403 paths | Full browser sign-in against a live server (UI rendering checked in headless Chrome with API fixtures) |
-| Alembic `0001 → 0002 → 0003` on SQLite; `compileall`; `node --check` | Backup restore, concurrency / load testing |
+| Legacy memory CRUD, ownership rejection, soft deletion, audit records | PostgreSQL backend and the pgvector / HNSW SQL path |
+| Summary / timeline / event writes, optimistic locking, revisions, supersedes and time filters | OpenAI / OpenAI-compatible embedding calls (code path only) |
+| Offline vector retrieval on SQLite: sparse chunk vectors, RRF fusion, version-aware filtering, reindex | MCP handshake over Streamable HTTP and stdio |
+| `memory_context` / categories / REST 401, 403, 404, 409, 422; two-tenant isolation | Full browser sign-in against a live server (UI rendering checked in headless Chrome with API fixtures) |
+| Alembic `0001 → 0002 → 0003 → 0004` on SQLite; `compileall`; `node --check` | Backup restore, concurrency / load testing |
 
 There is currently **no automated test suite committed to the repository** — the checks above were run as local scripts. Adding `pytest` coverage is one of the most valuable contributions (see [Roadmap](#roadmap-and-known-limitations)).
 
@@ -68,6 +68,7 @@ The source is published at [github.com/mohui1999/AllMemoryMCP](https://github.co
 ## Contents
 
 - [Features](#features)
+- [Memory layers](#memory-layers)
 - [How it works](#how-it-works)
 - [When not to use it](#when-not-to-use-it)
 - [Quick start (local)](#quick-start-local)
@@ -90,11 +91,30 @@ The source is published at [github.com/mohui1999/AllMemoryMCP](https://github.co
 - **Two agent interfaces:** REST API and remote MCP over Streamable HTTP, plus a local stdio bridge for clients that launch MCP servers as subprocesses.
 - **Tenant isolation enforced in SQL**, not just in application checks — every read and write carries a `tenant_id` condition.
 - **Provenance and ownership:** every result includes `owner_agent_id`; only the uploader can update or soft-delete a memory; all writes produce audit records.
+- **Three memory layers:** one Markdown summary per agent, append-only dated timeline memories, and versioned event memories for continuing areas such as `development`, `finance` or `health`.
+- **Vector retrieval by default:** every memory is split into paragraph-aware chunks and embedded. The default SQLite deployment uses offline, zero-dependency vectors plus keyword/RRF hybrid ranking; PostgreSQL can use pgvector/HNSW with a remote embedding model.
+- **One-call context loading:** `memory_context` returns an Agent's Markdown summary, recent timeline events, matching event memories and the categories in use.
 - **Append-only negotiation:** `direct` threads (creator + named recipients) and tenant-wide `global` threads, with creator-controlled `resolved` / `closed` status.
 - **Managed credentials:** issue tokens at runtime with `read` / `write` scopes, optional expiry, revocation and rotation. Only SHA-256 hashes are stored; raw tokens appear once.
 - **Read-only browser viewer:** memory search, source-agent and type filters, pagination, detail panel with copyable IDs, negotiation timelines, stat overview, light/dark themes and a responsive layout; login requires a managed read-only credential.
-- **Pluggable storage:** SQLite for local / single-host use; PostgreSQL with optional pgvector semantic search via `DATABASE_URL`.
+- **Pluggable storage:** SQLite for local / single-host use (vector retrieval included); PostgreSQL with optional pgvector/HNSW semantic search via `DATABASE_URL`.
 - **Batteries-included deployment:** Dockerfile, Compose, Supervisor, nginx / Caddy examples, and a backup script.
+
+## Memory layers
+
+Each Agent writes within its own identity and tenant. Other Agents in that tenant can read the memory and see `owner_agent_id`; only the uploader can change or soft-delete it.
+
+| Layer | Purpose | Update behavior |
+|---|---|---|
+| `summary` | The Agent's current Markdown overview of its retained knowledge | One active summary per Agent; updates use `expected_version` and keep revision snapshots |
+| `timeline` | A dated event or observation | Append-only; corrections create a new event with `supersedes_memory_id` |
+| `event` | Continuously updated event knowledge within a category, such as an ongoing development or health matter | One active item per Agent/category/key; updates use `expected_version` and keep revision snapshots |
+
+Legacy records created through `memory_write` remain searchable as the `legacy` layer. `memory_search` searches all layers by default. Timeline filters accept timezone-qualified ISO 8601 values.
+
+Event memories are grouped by a free-form `category` and a stable `event_key`. Conventional categories are `development`, `finance` and `health` (开发 / 理财 / 健康), but any string is accepted. `GET /v1/categories` (or the `memory_categories` MCP tool) lists the categories in use, and `GET /v1/memory-context` (or `memory_context`) returns an Agent's summary, recent timeline, matching event memories and categories in one call — the recommended first call of an Agent session.
+
+Every layer is chunked and embedded on write. Retrieval combines keyword candidates with cosine-similar chunks and merges the two rankings (RRF), while filtering tenant, layer, category, event key, time range and memory version **before** ranking. Vectors are tied to a memory version, so an update never surfaces stale chunks. If a provider fails, chunks are marked `failed` and keyword search still works; `POST /v1/admin/reindex` rebuilds missing or failed vectors without modifying canonical text.
 
 ## How it works
 
@@ -117,6 +137,7 @@ REST, MCP, and the viewer call the same service layer and database — there is 
 | Tenant | An isolated memory space, identified by `tenant_id` carried on every row. |
 | Principal | An authenticated identity: `(tenant_id, agent_id, scopes)`. Derived from the Bearer token, never supplied by the caller. |
 | Memory | A text record with `memory_type`, `tags`, `version`, timestamps and an `owner_agent_id`. Deletion is soft (`deleted_at`). |
+| Structured memory | A summary, timeline event, or categorized event document. Summary/event changes keep revision snapshots; timeline corrections supersede prior events. |
 | Negotiation | A `direct` or `global` thread containing append-only messages. Closing a thread never edits a memory. |
 | Scope | `read` or `write`. Static tokens grant both; managed credentials declare their scopes explicitly. |
 
@@ -126,7 +147,7 @@ Being explicit about the boundaries saves evaluation time:
 
 - **Not a general RAG or vector database.** Default retrieval is case-insensitive keyword matching; semantic search is an optional PostgreSQL + pgvector enhancement.
 - **Not a user account system.** The browser login is a read-only managed-token flow. There are no passwords, persistent sessions, self-service signup, or OAuth/OIDC.
-- **Not a content-versioning system.** Soft deletion and a `version` counter exist, but historical content snapshots are not retained.
+- **Not a general content-versioning system.** Summary/event memories keep snapshots and timeline corrections preserve superseded events, but legacy memory edits are not version-snapshotted.
 - **Not a high-concurrency datastore.** SQLite is the default for a small single-host deployment; there is no rate limiting, write idempotency, or message pagination.
 - **Not multi-organization ready out of the box.** Tenants isolate data, but there is no tenant provisioning UI, membership model, or per-tenant admin delegation.
 
@@ -289,6 +310,14 @@ Route summary (all `/v1/*` routes require a Bearer token):
 | `GET` | `/health` | Service health (unauthenticated) |
 | `GET`, `POST` | `/v1/memories` | Search/list and create memories |
 | `GET`, `PATCH`, `DELETE` | `/v1/memories/{memory_id}` | Read, update, or soft-delete a memory |
+| `GET`, `PUT` | `/v1/memory-summary` | Read or version-update the caller's Markdown summary |
+| `GET` | `/v1/memory-summaries/{agent_id}` | Read another Agent's summary in the same tenant |
+| `GET`, `POST` | `/v1/timeline-memories` | Search or append dated events |
+| `GET`, `PUT` | `/v1/event-memories` | Search or upsert a versioned category/event memory |
+| `PATCH` | `/v1/event-memories/{memory_id}` | Update an owned event memory with `expected_version` |
+| `GET` | `/v1/memories/{memory_id}/revisions` | Read summary/event revision snapshots |
+| `GET` | `/v1/categories` | List categories in use, with event/timeline counts |
+| `GET` | `/v1/memory-context` | Load an Agent's summary, timeline, event memories and categories at once |
 | `GET`, `POST` | `/v1/negotiations` | List visible threads or start a thread |
 | `GET` | `/v1/negotiations/{thread_id}` | Read a thread and its messages |
 | `POST` | `/v1/negotiations/{thread_id}/messages` | Append a message |
@@ -296,8 +325,42 @@ Route summary (all `/v1/*` routes require a Bearer token):
 | `POST`, `GET` | `/v1/admin/credentials` | Issue or list managed credentials (admin token required) |
 | `POST` | `/v1/admin/credentials/{id}/revoke` | Revoke a managed credential |
 | `POST` | `/v1/admin/credentials/{id}/rotate` | Rotate a managed credential |
+| `POST` | `/v1/admin/reindex` | Rebuild missing/failed chunk vectors (admin token required) |
 
 `GET /v1/...` requires the `read` scope; all writes require `write`. A missing scope returns `403`. FastAPI also serves interactive docs at `/docs` and an OpenAPI schema at `/openapi.json`.
+
+Structured-memory examples:
+
+```sh
+# Create/update your summary. Omit expected_version when creating; use the
+# returned version when updating, to avoid overwriting another recent update.
+curl -X PUT http://127.0.0.1:8099/v1/memory-summary \
+  -H 'Authorization: Bearer <agent-token>' -H 'Content-Type: application/json' \
+  -d '{"markdown":"# Current context: Working on the memory service.","expected_version":0}'
+
+curl -X POST http://127.0.0.1:8099/v1/timeline-memories \
+  -H 'Authorization: Bearer <agent-token>' -H 'Content-Type: application/json' \
+  -d '{"title":"Added vector retrieval","content":"Implemented chunked embeddings.","occurred_at":"2026-11-09T12:00:00Z","category":"development"}'
+
+curl -X PUT http://127.0.0.1:8099/v1/event-memories \
+  -H 'Authorization: Bearer <agent-token>' -H 'Content-Type: application/json' \
+  -d '{"category":"development","event_key":"memory-storage","title":"Memory storage design","content_markdown":"## Current approach: Use versioned event memory and vector chunks."}'
+```
+
+Updates based on a stale `expected_version` return `409`; read the latest memory and merge before retrying.
+
+Load the whole picture in one call (recommended when an Agent starts), inspect categories, and rebuild vectors after enabling or changing an embedding provider:
+
+```sh
+curl 'http://127.0.0.1:8099/v1/memory-context?category=finance' \
+  -H 'Authorization: Bearer <agent-token>'
+
+curl http://127.0.0.1:8099/v1/categories \
+  -H 'Authorization: Bearer <agent-token>'
+
+curl -X POST 'http://127.0.0.1:8099/v1/admin/reindex?batch_size=200' \
+  -H 'Authorization: Bearer <admin-token>'
+```
 
 ## MCP tools
 
@@ -308,6 +371,12 @@ Route summary (all `/v1/*` routes require a Bearer token):
 | `memory_write` | Create a memory owned by the calling agent |
 | `memory_update` | Update only the calling agent's memory |
 | `memory_delete` | Soft-delete only the calling agent's memory |
+| `memory_summary_get` / `memory_summary_write` | Read summaries or create/version-update the caller's summary |
+| `memory_timeline_write` | Append a dated event or superseding correction |
+| `memory_event_write` | Create/version-update a categorized event memory (`development`, `finance`, `health`, ...) |
+| `memory_context` | Load an Agent's summary, timeline, event memories and categories in one call |
+| `memory_categories` | List the categories currently in use |
+| `memory_revisions` | Read visible summary/event revision snapshots |
 | `negotiation_start` | Start a direct or global discussion |
 | `negotiation_list` | List threads visible to the caller |
 | `negotiation_post` | Append a message to a visible thread |
@@ -319,7 +388,7 @@ Tool schemas never accept credentials as arguments; identity always comes from t
 
 The viewer at `/` accepts a username and a **database-managed credential with `read` scope only**. The username must match the credential's `agent_id`. The viewer rejects static environment tokens, credentials carrying `write` or `admin` scope, and admin tokens. The browser keeps the credential in memory only — refreshing or closing the page signs the user out, and revocation takes effect on the next request.
 
-The viewer has three workspaces: **Memories** (search, source-agent and type filters, pagination, and a detail panel with full metadata), **Discussions** (direct and global threads with an append-only message timeline), and **About** (a short map of the access model). Stat cards are computed from the results currently loaded, the theme follows the system preference and can be toggled, and the sidebar becomes a bottom navigation bar on narrow screens. Every displayed value comes from the API.
+The viewer has three workspaces: **Memories** (keyword/semantic search, layer or type filters, source-agent filtering, pagination, and a detail panel with full metadata), **Discussions** (direct and global threads with an append-only message timeline), and **About** (a short map of the access model). Structured memory cards show their category, event key or event time. Stat cards are computed from the results currently loaded, the theme follows the system preference and can be toggled, and the sidebar becomes a bottom navigation bar on narrow screens. Every displayed value comes from the API.
 
 The browser viewer UI is in English; localization into other languages is future work. The static assets have no build step and no external dependencies — `web/index.html`, `web/app.js` and `web/style.css` are served directly.
 
@@ -352,10 +421,11 @@ Give the user `viewer-alice` as the username and the returned `token` as the log
 | `MCP_TRANSPORT` | `streamable-http` or `stdio` | `streamable-http` |
 | `MCP_AGENT_ID` | Identity for a local stdio process | unset |
 | `MCP_TENANT_ID` | Tenant for a local stdio process | `default` |
-| `EMBEDDING_PROVIDER` | Optional semantic embedding provider (`openai`) | unset |
-| `OPENAI_API_KEY` | API key used only when semantic embeddings are enabled | unset |
-| `OPENAI_EMBED_MODEL` | Embedding model name | `text-embedding-3-small` |
-| `EMBEDDING_DIM` | Vector dimension; must match the model | `1536` |
+| `EMBEDDING_PROVIDER` | `local` (offline hashing vectors), `openai` (semantic), or `none` (keyword only) | `local` |
+| `EMBEDDING_DIM` | Vector dimension; must match the remote model when using `openai` | `1536` |
+| `OPENAI_API_KEY` | Key for the `openai` provider; local gateways often ignore it | unset |
+| `OPENAI_EMBED_MODEL` | Remote embedding model name | `text-embedding-3-small` |
+| `OPENAI_BASE_URL` / `EMBEDDING_BASE_URL` | OpenAI-compatible endpoint (Ollama, a private gateway, ...) | unset |
 
 The REST listener port (`8099`) is set in the `uvicorn` command or `deploy/supervisord.conf`, not via an environment variable.
 
@@ -363,7 +433,9 @@ The REST listener port (`8099`) is set in the `uvicorn` command or `deploy/super
 
 SQLite is the default for local and single-host use: one file, trivial backups, and a small memory footprint. PostgreSQL is supported through SQLAlchemy and Alembic migrations. It is kept **opt-in** because the intended host is a memory-constrained single machine; a bundled PostgreSQL sidecar would add permanent memory pressure for a low-concurrency workload.
 
-Default retrieval is case-insensitive keyword matching over `content`, `tags` and `memory_type`, ordered by update time (`limit` capped at 100, `offset` for paging). For semantic search, use PostgreSQL with pgvector plus `EMBEDDING_PROVIDER=openai` and `OPENAI_API_KEY`; embeddings are computed remotely, so no local model is loaded. If embeddings are disabled or the provider fails, search falls back to keyword matching. SQLite stores embeddings as JSON text and does not offer the vector path.
+Vector retrieval is **on by default and works on SQLite**. `EMBEDDING_PROVIDER=local` produces deterministic offline vectors (word, word-bigram and CJK character-bigram feature hashing): no API key, no model download, no extra package. It captures lexical/character similarity. For true semantic vectors set `EMBEDDING_PROVIDER=openai` with `OPENAI_API_KEY`, optionally pointing `OPENAI_BASE_URL` at Ollama or another OpenAI-compatible gateway. Use `EMBEDDING_PROVIDER=none` for keyword-only search.
+
+Every structured memory is split into paragraph-aware chunks; each chunk stores its content hash, memory version, provider/model and vector. On SQLite the vectors are sparse JSON and cosine distance is computed in Python; on PostgreSQL with pgvector the same distance is computed in SQL using the HNSW index. Both paths apply tenant, layer, category, event key, time range and memory-version filters **before** ranking, then fuse keyword and vector candidates with reciprocal rank fusion. Legacy `memory_write` records keep a whole-record embedding. If a provider fails, chunks are marked `failed`: canonical text is still written and keyword search still works. `POST /v1/admin/reindex` rebuilds missing/failed vectors, which is also required after switching provider or model. `EMBEDDING_DIM` must match the remote model's output size; set it before running PostgreSQL migrations.
 
 To apply PostgreSQL migrations:
 
@@ -371,7 +443,7 @@ To apply PostgreSQL migrations:
 DATABASE_URL='postgresql+psycopg://user:password@host:5432/allmemory' alembic upgrade head
 ```
 
-The chain is `0001_initial` (multi-tenant tables) → `0002_embedding` (vector column and HNSW index on PostgreSQL) → `0003_agent_credentials` (managed credentials). SQLite development databases are created on startup via `create_all`. The compose file includes a commented-out `pgvector/pgvector:pg16` service; review and secure its credentials before enabling it.
+The chain is `0001_initial` (multi-tenant tables) → `0002_embedding` (legacy vector column and HNSW index on PostgreSQL) → `0003_agent_credentials` (managed credentials) → `0004_structured_memory` (three memory layers, revisions, chunks and a chunk-vector HNSW index). SQLite databases are created on startup via `create_all`; PostgreSQL deployments must run `alembic upgrade head`. The compose file includes a commented-out `pgvector/pgvector:pg16` service; review and secure its credentials before enabling it.
 
 ## Contributing
 

@@ -334,6 +334,8 @@ h1 { font-size: clamp(30px, 3.3vw, 42px); line-height: 1.18; letter-spacing: -1.
 .type-badge { font-size: 10px; font-weight: 700; letter-spacing: .3px; color: var(--badge-color); background: var(--badge-bg); border-radius: 6px; padding: 4px 9px; text-transform: capitalize; }
 .version-badge { font-family: var(--mono); font-size: 9.5px; color: var(--faint); border: 1px solid var(--border); border-radius: 5px; padding: 2px 6px; }
 .card-date { font-size: 10.5px; color: var(--faint); white-space: nowrap; }
+.card-heading { display: block; margin-bottom: 5px; color: var(--ink); font-size: 14px; line-height: 1.4; }
+.card-context { display: block; margin-bottom: 5px; color: var(--ink-muted); font-size: 11px; line-height: 1.4; }
 .card-content { font-size: 13px; color: var(--ink); line-height: 1.65; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; word-break: break-word; }
 .card-bottom { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 14px; padding-top: 12px; border-top: 1px dashed var(--border); }
 .source-chip { display: inline-flex; align-items: center; gap: 8px; font-size: 11px; color: var(--ink-2); font-weight: 570; min-width: 0; }

@@ -20,7 +20,7 @@
 - 記憶の更新・論理削除はアップロードしたエージェントのみ可能
 - 直接/全体協議スレッド。メッセージは追記型で記憶を自動変更しない
 - scope、有効期限、失効、ローテーションに対応した管理資格情報
-- SQLite 標準。PostgreSQL と pgvector による任意の意味検索
+- SQLite 標準（オフラインのベクトル検索が既定で有効）。PostgreSQL + pgvector による意味検索も選択可能
 
 ## ローカルで始める
 
@@ -143,6 +143,6 @@ PostgreSQL のマイグレーション:
 DATABASE_URL='postgresql+psycopg://user:password@host:5432/allmemory' alembic upgrade head
 ```
 
-意味検索には PostgreSQL + pgvector と `EMBEDDING_PROVIDER=openai`、`OPENAI_API_KEY` が必要です。追加設定や API の詳細は[英語版 README](../../README.md)を参照してください。インターネット公開時は HTTPS を使用してください。OAuth/OIDC は未実装です。
+ベクトル検索は既定で有効です。API キー不要のローカル埋め込みが SQLite で動作し、真の意味ベクトルを使う場合は `EMBEDDING_PROVIDER=openai` と `OPENAI_API_KEY`（または OpenAI 互換エンドポイント）を設定します。追加設定や API の詳細は[英語版 README](../../README.md)を参照してください。インターネット公開時は HTTPS を使用してください。OAuth/OIDC は未実装です。
 
 本プロジェクトは [MIT License](../../LICENSE) の下で公開されています。

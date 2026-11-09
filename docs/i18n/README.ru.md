@@ -20,7 +20,7 @@
 - Изменять или логически удалять запись может только загрузивший её агент
 - Прямые и общие ветки обсуждений; сообщения только добавляются и не меняют память автоматически
 - Управляемые учётные данные: scopes, срок действия, отзыв и ротация
-- SQLite по умолчанию; PostgreSQL и необязательный pgvector-поиск
+- SQLite по умолчанию (офлайн-векторный поиск включён); PostgreSQL + pgvector опционально
 
 ## Локальный запуск
 
@@ -142,6 +142,6 @@ curl -X POST http://127.0.0.1:8099/v1/admin/credentials \
 DATABASE_URL='postgresql+psycopg://user:password@host:5432/allmemory' alembic upgrade head
 ```
 
-Для семантического поиска нужны PostgreSQL + pgvector, `EMBEDDING_PROVIDER=openai` и `OPENAI_API_KEY`. Остальные настройки описаны в [README на английском](../../README.md). Для удалённого доступа используйте HTTPS. OAuth/OIDC пока не реализован.
+Векторный поиск включён по умолчанию: локальные офлайн-эмбеддинги без API-ключа работают с SQLite. Для настоящих семантических векторов задайте `EMBEDDING_PROVIDER=openai` и `OPENAI_API_KEY` (или совместимый с OpenAI endpoint); PostgreSQL + pgvector использует HNSW. Остальные настройки описаны в [README на английском](../../README.md). Для удалённого доступа используйте HTTPS. OAuth/OIDC пока не реализован.
 
 Проект распространяется по [лицензии MIT](../../LICENSE).

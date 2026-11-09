@@ -11,16 +11,24 @@ from starlette.routing import Mount
 from starlette.responses import JSONResponse
 
 from memory_service import (Principal, ScopeError, authenticate, create_memory,
-                            delete_memory, get_memory, initialize, list_threads,
-                            post_message, resolve_thread, search_memories,
-                            start_thread, update_memory)
+                            create_timeline_memory, delete_memory,
+                            get_agent_summary, get_memory, get_memory_context,
+                            initialize, list_categories, list_memory_revisions,
+                            list_threads, post_message, resolve_thread,
+                            search_memories, start_thread, update_memory,
+                            upsert_agent_summary, upsert_event_memory)
 
 mcp = FastMCP("AllMemoryMCP", host=os.getenv("MCP_HOST", "0.0.0.0"),
               port=int(os.getenv("MCP_PORT", "8001")), instructions=(
     "Shared multi-tenant memory for Agents. Every authenticated Agent may read all "
     "memories within its own tenant. Only the uploading Agent may edit or delete its "
     "memory. Memory results identify their source Agent. Negotiation messages are "
-    "append-only and never directly modify memories."
+    "append-only and never directly modify memories. Use the summary layer for a "
+    "compact Agent overview, timeline for dated append-only events, and event for "
+    "versioned knowledge grouped by category and event key. Start a session with "
+    "memory_context to load all three layers at once. Typical event categories: "
+    "development, finance, health. Pass expected_version when updating a summary "
+    "or event memory."
 ))
 
 # Holds the authenticated Principal for the current HTTP request (remote transport).
@@ -69,9 +77,96 @@ class AgentAuthMiddleware:
 
 
 @mcp.tool()
-def memory_search(query: str = "", limit: int = 20, owner_agent_id: str | None = None) -> dict:
-    """Search tenant-readable memories; each result includes its source Agent."""
-    return {"items": search_memories(query, limit, owner_agent_id, caller())}
+def memory_search(query: str = "", limit: int = 20, owner_agent_id: str | None = None,
+                  memory_layer: str | None = None, category: str | None = None,
+                  event_key: str | None = None, occurred_from: str | None = None,
+                  occurred_to: str | None = None, offset: int = 0) -> dict:
+    """Search tenant-readable memories, optionally filtering by layer or event key.
+
+    Layers: summary (Agent overview), timeline (dated events), event (continuing
+    category memory), and legacy (records written through memory_write).
+    """
+    return {"items": search_memories(
+        query, limit, owner_agent_id, caller(), offset, memory_layer,
+        category, event_key, occurred_from, occurred_to,
+    )}
+
+
+@mcp.tool()
+def memory_summary_get(agent_id: str | None = None) -> dict:
+    """Read one Agent's Markdown summary in this tenant; defaults to the caller."""
+    principal = caller()
+    item = get_agent_summary(principal, agent_id or principal.agent_id)
+    return {"item": item}
+
+
+@mcp.tool()
+def memory_summary_write(markdown: str, source_watermark: str | None = None,
+                         expected_version: int | None = None,
+                         change_note: str | None = None) -> dict:
+    """Create or replace the caller's summary; pass the current version on updates."""
+    try:
+        return upsert_agent_summary(
+            caller(), markdown, source_watermark, expected_version, change_note,
+        )
+    except ScopeError as exc:
+        raise ValueError(str(exc)) from exc
+
+
+@mcp.tool()
+def memory_timeline_write(title: str, content: str, occurred_at: str,
+                          category: str | None = None,
+                          tags: list[str] | None = None,
+                          supersedes_memory_id: str | None = None) -> dict:
+    """Append a dated event. Corrections create a new event that supersedes the old one."""
+    try:
+        return create_timeline_memory(
+            caller(), title, content, occurred_at, category, tags,
+            supersedes_memory_id,
+        )
+    except ScopeError as exc:
+        raise ValueError(str(exc)) from exc
+
+
+@mcp.tool()
+def memory_event_write(category: str, event_key: str, title: str,
+                       content_markdown: str, expected_version: int | None = None,
+                       change_note: str | None = None,
+                       tags: list[str] | None = None) -> dict:
+    """Create/update a continuing categorized event memory owned by the caller."""
+    try:
+        return upsert_event_memory(
+            caller(), category, event_key, title, content_markdown,
+            expected_version, change_note, tags,
+        )
+    except ScopeError as exc:
+        raise ValueError(str(exc)) from exc
+
+
+@mcp.tool()
+def memory_context(agent_id: str | None = None, query: str = "",
+                   category: str | None = None,
+                   timeline_limit: int = 10, event_limit: int = 10) -> dict:
+    """Load an Agent's summary, timeline, event memories and categories in one call.
+
+    Recommended as the first call of a session. Use category to focus on one
+    subject (development, finance, health, ...) and query for hybrid retrieval.
+    """
+    return get_memory_context(
+        caller(), agent_id, query, category, timeline_limit, event_limit,
+    )
+
+
+@mcp.tool()
+def memory_categories(agent_id: str | None = None) -> dict:
+    """List the categories currently used by timeline and event memories."""
+    return {"items": list_categories(caller(), agent_id)}
+
+
+@mcp.tool()
+def memory_revisions(memory_id: str) -> dict:
+    """List version history for a summary or event memory visible in this tenant."""
+    return {"items": list_memory_revisions(caller(), memory_id)}
 
 
 @mcp.tool()
@@ -94,10 +189,15 @@ def memory_write(content: str, memory_type: str = "fact", tags: list[str] | None
 
 @mcp.tool()
 def memory_update(memory_id: str, content: str | None = None,
-                  memory_type: str | None = None, tags: list[str] | None = None) -> dict:
+                  memory_type: str | None = None, tags: list[str] | None = None,
+                  expected_version: int | None = None,
+                  change_note: str | None = None) -> dict:
     """Update only a memory uploaded by the authenticated Agent."""
     try:
-        item = update_memory(caller(), memory_id, content, memory_type, tags)
+        item = update_memory(
+            caller(), memory_id, content, memory_type, tags,
+            expected_version, change_note,
+        )
     except ScopeError as exc:
         raise ValueError(str(exc)) from exc
     if not item:

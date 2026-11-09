@@ -36,15 +36,15 @@ AllMemoryMCP 是一个可自托管的小型服务，围绕三条规则构建：
 
 ## 项目状态
 
-**Pre-1.0 / 实验阶段**（API 版本 `0.3.0`，2026 年 11 月）。核心服务已实现，脚本化检查在 SQLite 上全部通过，但若干路径尚未在真实基础设施上实跑。上生产前请先读这一节。
+**Pre-1.0 / 实验阶段**（API 版本 `0.4.0`，2026 年 11 月）。三类记忆、离线向量检索、上下文聚合与向量重建均有 SQLite 脚本化验证；PostgreSQL + pgvector、远端嵌入服务和真实 MCP 握手仍未实跑。上生产前请先读这一节。
 
 | 已实跑验证（2026-11-09） | 尚未实跑 |
 |---|---|
-| 记忆增删改查、越权拒绝、软删除、审计记录 | PostgreSQL 后端与 pgvector / HNSW 路径 |
-| 双租户隔离：读、写、线程、留言 | OpenAI embedding 调用（仅代码层验证） |
-| 托管凭证：签发、校验、撤销、轮换、只读 scope | Streamable HTTP / stdio 的 MCP 握手 |
-| FastAPI `TestClient` 覆盖 REST 路由及 401/403 | 真实服务上的完整网页登录流程（界面渲染已用无头 Chrome + API 数据验证） |
-| Alembic `0001 → 0002 → 0003`（SQLite）、`compileall`、`node --check` | 备份恢复、并发与压力测试 |
+| 旧版记忆增删改查、越权拒绝、软删除、审计记录 | PostgreSQL 后端与 pgvector / HNSW 的 SQL 检索路径 |
+| 概要 / 时间记忆 / 事件记忆写入、乐观锁、版本快照、纠错与时间筛选 | OpenAI / 兼容接口的嵌入调用（仅代码层验证） |
+| SQLite 离线向量检索：稀疏分块向量、RRF 融合、版本过滤、重建 | Streamable HTTP / stdio 的 MCP 握手 |
+| `memory_context`、类别枚举、REST 401/403/404/409/422、双租户隔离 | 真实服务上的完整网页登录流程（界面渲染已用无头 Chrome + API 数据验证） |
+| Alembic `0001 → 0002 → 0003 → 0004`（SQLite）、`compileall`、`node --check` | 备份恢复、并发与压力测试 |
 
 仓库里**目前没有随代码提交的自动化测试套件**——上述检查是本地临时脚本。补一套 `pytest` 是当前最有价值的贡献（见[路线图](#路线图与已知限制)）。
 
@@ -53,6 +53,7 @@ AllMemoryMCP 是一个可自托管的小型服务，围绕三条规则构建：
 ## 目录
 
 - [功能](#功能)
+- [记忆层](#记忆层)
 - [工作原理](#工作原理)
 - [什么时候不该用](#什么时候不该用)
 - [本地快速开始](#本地快速开始)
@@ -75,11 +76,30 @@ AllMemoryMCP 是一个可自托管的小型服务，围绕三条规则构建：
 - **两种 Agent 接口**：REST API、远程 MCP（Streamable HTTP），以及给「只能启动本地 MCP 子进程」的客户端用的 stdio 桥接。
 - **租户隔离下沉到 SQL**：不只在应用层判断，每条读写查询都带 `tenant_id` 条件。
 - **来源与所有权**：结果包含 `owner_agent_id`；只有上传者能更新或软删除；所有写操作都写审计记录。
+- **三类记忆**：每个 Agent 一份 Markdown 记忆概要、只追加的时间记忆，以及按类别和稳定键持续更新的事件记忆（如开发、理财、健康）。
+- **默认开启向量检索**：每条记忆按段落切块并生成向量。默认 SQLite 部署用零依赖的离线向量 + 关键词 / RRF 混合排序；PostgreSQL 可改用 pgvector / HNSW + 远端嵌入模型。
+- **一次取回全貌**：`memory_context` 一次返回某个 Agent 的 Markdown 概要、近期时间记忆、相关事件记忆和在用的类别。
 - **只追加的协商**：`direct` 线程（创建者 + 指定接收者）与租户内 `global` 线程，创建者可置为 `resolved` / `closed`。
 - **托管凭证**：运行时签发带 `read` / `write` scope 的 token，支持过期、撤销、轮换；库里只存 SHA-256，明文仅出现一次。
 - **只读浏览网页**：记忆搜索、来源与类型筛选、分页、可复制 ID 的详情面板、协商时间线、统计概览、明暗主题与响应式布局；登录必须使用托管只读凭证。
-- **可切换存储**：本地 / 单机用 SQLite，改 `DATABASE_URL` 即可用 PostgreSQL，并可选 pgvector 语义检索。
+- **可切换存储**：本地 / 单机用 SQLite（已包含向量检索），改 `DATABASE_URL` 即可用 PostgreSQL，并可选 pgvector / HNSW 语义检索。
 - **开箱即部署**：Dockerfile、Compose、Supervisor、nginx / Caddy 示例和备份脚本。
+
+## 记忆层
+
+每个 Agent 只能在自己的身份和租户下写入。该租户的其他 Agent 可以读取，并通过 `owner_agent_id` 识别上传者；只有上传者可以修改或软删除。
+
+| 记忆层 | 用途 | 更新规则 |
+|---|---|---|
+| `summary` | Agent 当前知识的 Markdown 概要 | 每个 Agent 一份有效概要；更新需传 `expected_version`，并保留版本快照 |
+| `timeline` | 带时间的事件或观察 | 只追加；纠错时新建事件并填写 `supersedes_memory_id` |
+| `event` | 按类别持续维护的事件记忆，如某个开发项目、理财计划或健康事项 | 每个 Agent / 类别 / `event_key` 一份有效记忆；更新需传 `expected_version`，并保留版本快照 |
+
+通过旧 `memory_write` 创建的记录仍可作为 `legacy` 层检索。`memory_search` 默认搜索全部记忆层，时间线筛选使用带时区的 ISO 8601 时间。
+
+事件记忆按自由文本的 `category` 和稳定的 `event_key` 归类，惯例是 `development` / `finance` / `health`（开发 / 理财 / 健康），也支持任意字符串。`GET /v1/categories`（或 `memory_categories`）列出在用的类别；`GET /v1/memory-context`（或 `memory_context`）一次返回某个 Agent 的概要、时间记忆、事件记忆和类别，推荐作为 Agent 会话的第一次调用。
+
+每层记忆写入时都会分块并生成向量。检索先按租户、记忆层、类别、事件键、时间范围和记忆版本过滤，再对关键词候选与余弦相似的分块做 RRF 融合排序；向量绑定记忆版本，更新后不会召回旧分块。若嵌入服务失败，分块标记 `failed`，正文照常写入、关键词检索仍可用；`POST /v1/admin/reindex` 可在不改动正文的前提下重建缺失或失败的向量。
 
 ## 工作原理
 
@@ -102,6 +122,7 @@ REST、MCP 和网页调用同一套服务层与同一个数据库，不存在第
 | 租户（Tenant） | 由每行数据上的 `tenant_id` 标识的隔离记忆空间。 |
 | 身份（Principal） | 认证后的 `(tenant_id, agent_id, scopes)`，从 Bearer token 解析，绝不由调用方传入。 |
 | 记忆（Memory） | 带 `memory_type`、`tags`、`version`、时间戳和 `owner_agent_id` 的文本记录；删除为软删除（`deleted_at`）。 |
+| 结构化记忆 | 概要、时间记忆或事件记忆；概要 / 事件记忆保留版本快照，时间线纠错会标记被替代的事件。 |
 | 协商（Negotiation） | `direct` 或 `global` 线程，内含只追加消息；关闭线程不会修改记忆。 |
 | 权限（Scope） | `read` 或 `write`。静态 token 默认两者都有；托管凭证显式声明。 |
 
@@ -109,9 +130,9 @@ REST、MCP 和网页调用同一套服务层与同一个数据库，不存在第
 
 把边界写清楚，能省下评估时间：
 
-- **不是通用 RAG / 向量数据库。** 默认是不区分大小写的关键词匹配；语义检索是 PostgreSQL + pgvector 的可选增强。
+- **不是通用 RAG / 向量数据库。** 默认离线向量是词汇 / 字符级近似，不是深度语义模型；要真语义需配置 OpenAI 兼容的嵌入服务。
 - **不是用户账户系统。** 网页登录是「托管只读凭证」流程，没有密码、持久会话、自助注册，也没有 OAuth/OIDC。
-- **不是内容版本管理系统。** 有软删除和 `version` 计数器，但不保留历史内容快照。
+- **不是通用内容版本管理系统。** 概要 / 事件记忆保留快照，时间线纠错保留被替代事件；旧版记忆编辑不保存内容快照。
 - **不是高并发存储。** 默认 SQLite 面向单机小规模部署；没有限流、写入幂等或消息分页。
 - **不是开箱即用的多组织 SaaS。** 租户能隔离数据，但没有租户开通界面、成员模型或按租户委派管理员。
 
@@ -272,6 +293,14 @@ curl -X POST http://127.0.0.1:8099/v1/negotiations \
 | `GET` | `/health` | 健康检查（无需认证） |
 | `GET`, `POST` | `/v1/memories` | 搜索 / 列举、创建记忆 |
 | `GET`, `PATCH`, `DELETE` | `/v1/memories/{memory_id}` | 读取、更新、软删除 |
+| `GET`, `PUT` | `/v1/memory-summary` | 读取或按版本更新当前 Agent 的 Markdown 概要 |
+| `GET` | `/v1/memory-summaries/{agent_id}` | 读取同租户另一 Agent 的概要 |
+| `GET`, `POST` | `/v1/timeline-memories` | 搜索或追加时间记忆 |
+| `GET`, `PUT` | `/v1/event-memories` | 搜索或创建 / 更新带版本的类别事件记忆 |
+| `PATCH` | `/v1/event-memories/{memory_id}` | 传入 `expected_version` 更新自己拥有的事件记忆 |
+| `GET` | `/v1/memories/{memory_id}/revisions` | 读取概要 / 事件记忆的版本快照 |
+| `GET` | `/v1/categories` | 列出在用类别及事件 / 时间记忆数量 |
+| `GET` | `/v1/memory-context` | 一次取回某 Agent 的概要、时间记忆、事件记忆和类别 |
 | `GET`, `POST` | `/v1/negotiations` | 列举可见线程、发起线程 |
 | `GET` | `/v1/negotiations/{thread_id}` | 读取线程与消息 |
 | `POST` | `/v1/negotiations/{thread_id}/messages` | 追加消息 |
@@ -279,8 +308,41 @@ curl -X POST http://127.0.0.1:8099/v1/negotiations \
 | `POST`, `GET` | `/v1/admin/credentials` | 签发 / 列举托管凭证（需 admin token） |
 | `POST` | `/v1/admin/credentials/{id}/revoke` | 撤销托管凭证 |
 | `POST` | `/v1/admin/credentials/{id}/rotate` | 轮换托管凭证 |
+| `POST` | `/v1/admin/reindex` | 重建缺失 / 失败的向量分块（需 admin token） |
 
 `GET /v1/...` 需要 `read` scope，所有写操作需要 `write`；缺少 scope 返回 `403`。FastAPI 还提供 `/docs` 与 `/openapi.json`。
+
+结构化记忆调用示例：
+
+```sh
+# 创建时可省略 expected_version，更新时使用上次响应中的版本号，避免覆盖较新的修改。
+curl -X PUT http://127.0.0.1:8099/v1/memory-summary \
+  -H 'Authorization: Bearer <agent-token>' -H 'Content-Type: application/json' \
+  -d '{"markdown":"# 当前上下文：正在开发记忆服务。","expected_version":0}'
+
+curl -X POST http://127.0.0.1:8099/v1/timeline-memories \
+  -H 'Authorization: Bearer <agent-token>' -H 'Content-Type: application/json' \
+  -d '{"title":"加入向量检索","content":"实现了分块嵌入。","occurred_at":"2026-11-09T12:00:00Z","category":"开发"}'
+
+curl -X PUT http://127.0.0.1:8099/v1/event-memories \
+  -H 'Authorization: Bearer <agent-token>' -H 'Content-Type: application/json' \
+  -d '{"category":"development","event_key":"memory-storage","title":"记忆存储方案","content_markdown":"## 当前方案：使用版本化事件记忆与向量分块。"}'
+```
+
+使用过期 `expected_version` 更新会返回 `409`；请重新读取最新记忆、合并后再提交。
+
+一次取回某个 Agent 的全部上下文（推荐会话开始时调用）、查看类别、以及切换嵌入服务后重建向量：
+
+```sh
+curl 'http://127.0.0.1:8099/v1/memory-context?category=finance' \
+  -H 'Authorization: Bearer <agent-token>'
+
+curl http://127.0.0.1:8099/v1/categories \
+  -H 'Authorization: Bearer <agent-token>'
+
+curl -X POST 'http://127.0.0.1:8099/v1/admin/reindex?batch_size=200' \
+  -H 'Authorization: Bearer <admin-token>'
+```
 
 ## MCP 工具
 
@@ -291,6 +353,12 @@ curl -X POST http://127.0.0.1:8099/v1/negotiations \
 | `memory_write` | 创建一条归属当前 Agent 的记忆 |
 | `memory_update` | 只更新当前 Agent 上传的记忆 |
 | `memory_delete` | 只软删除当前 Agent 上传的记忆 |
+| `memory_summary_get` / `memory_summary_write` | 读取概要，或创建 / 按版本更新自己的概要 |
+| `memory_timeline_write` | 追加带时间的事件或纠错事件 |
+| `memory_event_write` | 创建 / 按版本更新类别事件记忆（开发、理财、健康……） |
+| `memory_context` | 一次取回某 Agent 的概要、时间记忆、事件记忆和类别 |
+| `memory_categories` | 列出当前在用的类别 |
+| `memory_revisions` | 读取可见的概要 / 事件记忆版本快照 |
 | `negotiation_start` | 发起定向或全局讨论 |
 | `negotiation_list` | 列举当前 Agent 可见的线程 |
 | `negotiation_post` | 向可见线程追加消息 |
@@ -302,7 +370,7 @@ curl -X POST http://127.0.0.1:8099/v1/negotiations \
 
 `/` 页面接受用户名 + **数据库签发、且只有 `read` scope 的托管凭证**，用户名必须与凭证的 `agent_id` 完全一致。静态环境变量 token、带 `write` / `admin` scope 的凭证、admin token 都会被拒绝。凭证只存在页面内存中，刷新或关闭页面即退出；撤销后下一次请求立即失效。
 
-网页有三个工作区：**记忆**（搜索、来源与类型筛选、分页、含完整元数据的详情面板）、**讨论**（定向与全局线程，附只追加的消息时间线）、**关于**（访问模型简述）。统计卡片基于当前已加载的结果计算；主题默认跟随系统并可手动切换；窄屏下侧栏会收成底部导航。界面展示的所有数值都来自 API。
+网页有三个工作区：**记忆**（关键词 / 语义搜索、记忆层或类型筛选、来源筛选、分页、含完整元数据的详情面板）、**讨论**（定向与全局线程，附只追加的消息时间线）、**关于**（访问模型简述）。结构化记忆卡片会显示类别、事件键或事件时间。统计卡片基于当前已加载的结果计算；主题默认跟随系统并可手动切换；窄屏下侧栏会收成底部导航。界面展示的所有数值都来自 API。
 
 当前网页界面文案为英文，其他语言本地化尚未实现。静态资源没有构建步骤、不依赖外部资源——`web/index.html`、`web/app.js`、`web/style.css` 直接由服务托管。
 
@@ -335,10 +403,11 @@ curl -X POST http://127.0.0.1:8099/v1/admin/credentials \
 | `MCP_TRANSPORT` | `streamable-http` 或 `stdio` | `streamable-http` |
 | `MCP_AGENT_ID` | 本地 stdio 进程绑定的 Agent 身份 | 未设置 |
 | `MCP_TENANT_ID` | 本地 stdio 进程所属租户 | `default` |
-| `EMBEDDING_PROVIDER` | 可选语义嵌入提供方（`openai`） | 未设置 |
-| `OPENAI_API_KEY` | 仅在启用语义嵌入时使用 | 未设置 |
-| `OPENAI_EMBED_MODEL` | 嵌入模型名 | `text-embedding-3-small` |
-| `EMBEDDING_DIM` | 向量维度，需与模型一致 | `1536` |
+| `EMBEDDING_PROVIDER` | `local`（离线哈希向量）/ `openai`（语义向量）/ `none`（仅关键词） | `local` |
+| `EMBEDDING_DIM` | 向量维度；使用 `openai` 时需与模型输出一致 | `1536` |
+| `OPENAI_API_KEY` | `openai` 提供方使用；本地网关通常可忽略 | 未设置 |
+| `OPENAI_EMBED_MODEL` | 远端嵌入模型名 | `text-embedding-3-small` |
+| `OPENAI_BASE_URL` / `EMBEDDING_BASE_URL` | OpenAI 兼容端点（Ollama、自建网关等） | 未设置 |
 
 REST 监听端口 `8099` 写在 `uvicorn` 命令或 `deploy/supervisord.conf` 里，不是环境变量。
 
@@ -346,7 +415,9 @@ REST 监听端口 `8099` 写在 `uvicorn` 命令或 `deploy/supervisord.conf` �
 
 本地与单机默认 SQLite：单文件、备份简单、内存占用小。PostgreSQL 通过 SQLAlchemy + Alembic 支持，但保持**可选**——目标主机是内存紧张的单机，为低并发共享记忆常驻一个 Postgres 侧车并不划算。
 
-默认检索是对 `content`、`tags`、`memory_type` 做不区分大小写的关键词匹配，按更新时间倒序（`limit` 上限 100，`offset` 翻页）。要启用语义检索，需 PostgreSQL + pgvector 且设置 `EMBEDDING_PROVIDER=openai` 与 `OPENAI_API_KEY`；向量在远端计算，服务器不加载本地模型。嵌入未启用或调用失败时自动回退关键词检索。SQLite 把向量以 JSON 文本保存，不提供向量检索路径。
+**向量检索默认开启，SQLite 也能用。** `EMBEDDING_PROVIDER=local` 生成确定性的离线向量（词、词二元组、中文字符二元组特征哈希）：无需 API key、无需下载模型、无需额外依赖，适合内存紧张的单机；它捕捉的是词汇 / 字符级相似。要真语义向量可设 `EMBEDDING_PROVIDER=openai` + `OPENAI_API_KEY`，也可用 `OPENAI_BASE_URL` 指向 Ollama 或自建的 OpenAI 兼容网关；设 `none` 则只走关键词。
+
+结构化记忆按段落切块，每块保存内容哈希、记忆版本、提供方 / 模型和向量。SQLite 下向量以稀疏 JSON 存放、余弦距离在 Python 中计算；PostgreSQL + pgvector 下由 SQL 与 HNSW 索引计算。两条路径都先做租户 / 记忆层 / 类别 / 时间 / 版本过滤，再用 RRF 融合关键词与向量候选。旧版 `memory_write` 记录保留整条记录向量。提供方失败时只把分块标记为 `failed`，正文照常写入、关键词检索仍可用；`POST /v1/admin/reindex` 重建缺失 / 失败向量，切换提供方或模型后也需要执行一次。`EMBEDDING_DIM` 必须与远端模型输出维度一致，且应在执行 PostgreSQL 迁移前设定。
 
 PostgreSQL 迁移：
 
@@ -354,7 +425,7 @@ PostgreSQL 迁移：
 DATABASE_URL='postgresql+psycopg://user:password@host:5432/allmemory' alembic upgrade head
 ```
 
-迁移链：`0001_initial`（多租户表）→ `0002_embedding`（PostgreSQL 向量列 + HNSW 索引）→ `0003_agent_credentials`（托管凭证表）。SQLite 开发库在启动时由 `create_all` 建表。Compose 里附带注释掉的 `pgvector/pgvector:pg16` 服务，启用前请修改并保管好凭据。
+迁移链：`0001_initial`（多租户表）→ `0002_embedding`（旧版记忆向量列 + PostgreSQL HNSW 索引）→ `0003_agent_credentials`（托管凭证表）→ `0004_structured_memory`（三类记忆、版本历史、分块及分块向量 HNSW 索引）。SQLite 在启动时由 `create_all` 建表；PostgreSQL 部署必须运行 `alembic upgrade head`。Compose 里附带注释掉的 `pgvector/pgvector:pg16` 服务，启用前请修改并保管好凭据。
 
 ## 贡献指南
 

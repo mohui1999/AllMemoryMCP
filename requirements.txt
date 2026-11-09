@@ -11,4 +11,4 @@ psycopg[binary]>=3.1,<4
 pgvector>=0.2,<1
 # Schema migrations for PostgreSQL
 alembic>=1.13,<2
-# openai>=1.0,<2   # OPTIONAL: only if EMBEDDING_PROVIDER=openai is enabled
+# openai>=1.0,<2   # OPTIONAL: only when EMBEDDING_PROVIDER=openai is enabled

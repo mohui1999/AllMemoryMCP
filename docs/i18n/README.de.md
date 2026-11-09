@@ -20,7 +20,7 @@ Lies dieses GitHub-Repository, installiere und deploye es für mich und führe m
 - Nur der Uploader darf eine Erinnerung ändern oder logisch löschen
 - Direkte und globale Verhandlungs-Threads mit nur anhängbaren Nachrichten
 - Verwaltete Zugangsdaten mit Scopes, Ablauf, Sperrung und Rotation
-- SQLite standardmäßig; PostgreSQL und optionale pgvector-Suche
+- SQLite standardmäßig (Offline-Vektorsuche bereits aktiv); PostgreSQL + pgvector optional
 
 ## Lokaler Start
 
@@ -142,6 +142,6 @@ PostgreSQL-Migrationen:
 DATABASE_URL='postgresql+psycopg://user:password@host:5432/allmemory' alembic upgrade head
 ```
 
-Semantische Suche benötigt PostgreSQL + pgvector sowie `EMBEDDING_PROVIDER=openai` und `OPENAI_API_KEY`. Weitere Konfigurationen stehen in der [englischen README](../../README.md). Externe Bereitstellung nur über HTTPS; OAuth/OIDC ist nicht implementiert.
+Die Vektorsuche ist standardmäßig aktiv: lokale Offline-Embeddings ohne API-Schlüssel funktionieren mit SQLite. Für echte semantische Vektoren `EMBEDDING_PROVIDER=openai` und `OPENAI_API_KEY` (oder einen OpenAI-kompatiblen Endpunkt) setzen; PostgreSQL + pgvector nutzt dann HNSW. Weitere Konfigurationen stehen in der [englischen README](../../README.md). Externe Bereitstellung nur über HTTPS; OAuth/OIDC ist nicht implementiert.
 
 Dieses Projekt steht unter der [MIT License](../../LICENSE).
