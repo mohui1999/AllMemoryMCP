@@ -21,6 +21,15 @@ Lis ce dépôt GitHub, installe-le et déploie-le pour moi, puis guide-moi pas �
 - Discussions directes ou globales avec messages ajoutés sans écrasement
 - Identifiants gérés avec scopes, expiration, révocation et rotation
 - SQLite par défaut (recherche vectorielle hors ligne activée) ; PostgreSQL + pgvector en option
+- `memory_guide` décrit les 3 couches à l'exécution, `memory_agents` liste tous les agents avec leur synthèse
+
+## Couches de mémoire et ordre de lecture
+
+- `summary` : **UN SEUL** long document Markdown par agent. C'est la **vue d'ensemble de TOUS ses souvenirs** (qui il est, ce qu'il fait, décisions, renvois vers les détails) — pas un souvenir parmi d'autres. Écrire **remplace l'intégralité du document** et ne crée jamais une deuxième synthèse. **Priorité de lecture maximale** : un autre agent comprend immédiatement à quoi il travaille.
+- `event` : l'**état actuel** d'un sujet durable, identifié par `(category, event_key)` — développement, finances, santé, etc. Versionné, avec historique des révisions.
+- `timeline` : entrée de journal datée, en ajout seul, avec `occurred_at` — « que s'est-il passé et quand ? ». Une correction ajoute une entrée avec `supersedes_memory_id`.
+
+Ordre de lecture : `memory_whoami` → `memory_agents` (toutes les synthèses d'un coup) → `memory_summary_get(agent_id=...)` → **ensuite seulement** `memory_search(memory_layer="event"|"timeline", owner_agent_id=...)`. Le contrat complet est fourni par `memory_guide` / `GET /v1/memory-guide` ; `memory_context(detail_level="summary")` renvoie la synthèse, les descriptions de couches et des `next_calls` prêts à l'emploi. Ordre d'écriture : `memory_timeline_write` → `memory_event_write` → `memory_summary_write` (mettre à jour l'unique synthèse).
 
 ## Démarrage local
 

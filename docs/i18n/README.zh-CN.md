@@ -36,7 +36,7 @@ AllMemoryMCP 是一个可自托管的小型服务，围绕三条规则构建：
 
 ## 项目状态
 
-**Pre-1.0 / 实验阶段**（API 版本 `0.4.0`，2026 年 11 月）。三类记忆、离线向量检索、上下文聚合与向量重建在 SQLite 与 PostgreSQL + pgvector 两条路径上均有脚本化验证，Streamable HTTP 的真实 MCP 握手也已跑通；管理后台的登录与凭证生命周期在本地服务的无头 Chrome 中实测通过。远端嵌入服务、备份恢复与并发测试仍未实跑。上生产前请先读这一节。
+**Pre-1.0 / 实验阶段**（API 版本 `0.5.0`，2026 年 11 月）。三类记忆、离线向量检索、上下文聚合与向量重建在 SQLite 与 PostgreSQL + pgvector 两条路径上均有脚本化验证，Streamable HTTP 的真实 MCP 握手也已跑通；管理后台的登录与凭证生命周期在本地服务的无头 Chrome 中实测通过。远端嵌入服务、备份恢复与并发测试仍未实跑。上生产前请先读这一节。
 
 | 已实跑验证（2026-11-09） | 尚未实跑 |
 |---|---|
@@ -46,6 +46,7 @@ AllMemoryMCP 是一个可自托管的小型服务，围绕三条规则构建：
 | SQLite 离线向量检索：稀疏分块向量、RRF 融合、版本过滤、重建 | |
 | PostgreSQL 16 + pgvector：Alembic `0001 → 0004`、`vector` 扩展、HNSW 余弦索引、`<=>` 排序走 `Index Scan`、`vector(1536)` 分块向量、重建 | |
 | `memory_context`、类别枚举、REST 401/403/404/409/422、双租户隔离、Streamable HTTP 的 MCP `initialize`；SQLite 迁移链、`compileall`、`node --check` | |
+| `0.5.0`：`memory_guide`、`memory_agents` / `/v1/agents`、概要置顶与加权、唯一概要免版本号替换、`detail_level` 上下文；SQLite 脚本化验证 | |
 
 仓库里**目前没有随代码提交的自动化测试套件**——上述检查是本地临时脚本。补一套 `pytest` 是当前最有价值的贡献（见[路线图](#路线图与已知限制)）。
 
@@ -55,6 +56,7 @@ AllMemoryMCP 是一个可自托管的小型服务，围绕三条规则构建：
 
 - [功能](#功能)
 - [记忆层](#记忆层)
+- [Agent 读取协议](#agent-读取协议)
 - [工作原理](#工作原理)
 - [什么时候不该用](#什么时候不该用)
 - [本地快速开始](#本地快速开始)
@@ -77,9 +79,10 @@ AllMemoryMCP 是一个可自托管的小型服务，围绕三条规则构建：
 - **两种 Agent 接口**：REST API、远程 MCP（Streamable HTTP），以及给「只能启动本地 MCP 子进程」的客户端用的 stdio 桥接。
 - **租户隔离下沉到 SQL**：不只在应用层判断，每条读写查询都带 `tenant_id` 条件。
 - **来源与所有权**：结果包含 `owner_agent_id`；只有上传者能更新或软删除；所有写操作都写审计记录。
-- **三类记忆**：每个 Agent 一份 Markdown 记忆概要、只追加的时间记忆，以及按类别和稳定键持续更新的事件记忆（如开发、理财、健康）。
+- **三类记忆 + 明确的语义契约**：每个 Agent 一份较长的全量 Markdown 记忆概要、只追加的时间记忆，以及按类别和稳定键持续更新的事件记忆（开发、理财、健康等）；Agent 可随时调用 `memory_guide` 取回完整契约。
+- **概要优先读取**：`memory_agents` 一次列出所有 Agent 及各自唯一概要，别的 Agent 先看它就知道对方在干什么，再按需取详细的事件 / 时间记忆；无查询的列表把概要置顶，混合检索也给予小幅加权。
 - **默认开启向量检索**：每条记忆按段落切块并生成向量。默认 SQLite 部署用零依赖的离线向量 + 关键词 / RRF 混合排序；PostgreSQL 可改用 pgvector / HNSW + 远端嵌入模型。
-- **一次取回全貌**：`memory_context` 一次返回某个 Agent 的 Markdown 概要、近期时间记忆、相关事件记忆和在用的类别。
+- **一次取回全貌**：`memory_context` 返回概要、类别、计数和可直接照抄的后续调用；`detail_level=summary` 只取概要，`detail_level=full` 才附带时间线与事件行。
 - **只追加的协商**：`direct` 线程（创建者 + 指定接收者）与租户内 `global` 线程，创建者可置为 `resolved` / `closed`。
 - **托管凭证**：运行时签发带 `read` / `write` scope 的 token，支持过期、撤销、轮换；库里只存 SHA-256，明文仅出现一次。
 - **浏览网页**：记忆搜索、来源与类型筛选、分页、可复制 ID 的详情面板、协商时间线、统计概览、明暗主题与响应式布局；登录必须使用托管只读凭证。
@@ -91,17 +94,41 @@ AllMemoryMCP 是一个可自托管的小型服务，围绕三条规则构建：
 
 每个 Agent 只能在自己的身份和租户下写入。该租户的其他 Agent 可以读取，并通过 `owner_agent_id` 识别上传者；只有上传者可以修改或软删除。
 
-| 记忆层 | 用途 | 更新规则 |
+| 记忆层 | 到底代表什么 | 数量 | 更新规则 |
+|---|---|---|---|
+| `summary` | **该 Agent 全部记忆的唯一总览**：一份较长的 Markdown，写清它是谁、在做什么、关键决策、约定、当前状态和指向细节的线索。它**不是一条记忆**，而是「所有记忆的总体」，也是别的 Agent 最先要读的东西。 | **每个 `(tenant_id, agent_id)` 有且仅有一条有效记录**，由数据库部分唯一索引强制保证 | 写入即**整体替换整篇文档**并保留版本快照，最长 100000 字符；单个写入方可以省略 `expected_version`（自动读取当前版本）。 |
+| `timeline` | **时间记忆**：只追加的、带发生时间的日志条目，回答「什么时候发生了什么」。`occurred_at` 必须是带时区的 ISO 8601，可带 `category`。 | 每个 Agent 多条 | 不可改写；纠错时追加新条目并填 `supersedes_memory_id`。 |
+| `event` | **事件记忆**：某个持续主题的**当前状态文档**，按 `(category, event_key)` 区分，例如 `(development, AllMemoryMCP)`、`(finance, 长期配置)`、`(health, 过敏治疗)`。是会持续更新的活文档，不是日志条目。 | 每个 `(tenant_id, agent_id, category, event_key)` 一条有效记录 | 版本化 upsert，保留历史快照；多个写入方并发时传 `expected_version`。 |
+| `legacy` | 旧版 `memory_write` 创建的自由格式记录。 | 每个 Agent 多条 | 常规版本更新，仅为兼容保留。 |
+
+概要**允许比较长**，因为它就是给别的 Agent「一眼看懂这个 Agent 在干什么」用的全量摘要。**不要为了新增信息去创建第二条概要 —— 请替换已有那一条。** 其他 Agent 只能读，不能替换或删除。
+
+`GET /v1/memory-guide`（或 `memory_guide` 工具）以机器可读形式返回这份契约：各层含义、数量约束、长度上限、读写工具、读取顺序与规则，Agent 不必再猜 `summary` / `timeline` / `event` 分别是什么。`GET /v1/whoami`、`memory_whoami`、`memory_context` 和 `memory_search` 的响应里也带精简说明。
+
+事件记忆按自由文本的 `category` 和稳定的 `event_key` 归类，惯例是 `development` / `finance` / `health`（开发 / 理财 / 健康），也支持任意字符串。`GET /v1/categories`（或 `memory_categories`）列出在用的类别。
+
+每层记忆写入时都会分块并生成向量。检索先按租户、记忆层、类别、事件键、时间范围和记忆版本过滤，再对关键词候选与余弦相似的分块做 RRF 融合排序；无查询的列表把概要置顶，混合检索对概要给予小幅加权。向量绑定记忆版本，更新后不会召回旧分块。若嵌入服务失败，分块标记 `failed`，正文照常写入、关键词检索仍可用；`POST /v1/admin/reindex` 可在不改动正文的前提下重建缺失或失败的向量。
+
+## Agent 读取协议
+
+三层是**渐进式展开**的阶梯，不是三个平级的桶。新接入的 Agent 应该：
+
+1. **`memory_whoami`** —— 确认当前连接用的是哪个身份；响应里附带三层的精简说明。
+2. **`memory_agents`** / `GET /v1/agents` —— 一次读完**所有** Agent 的唯一概要和各自的时间 / 事件条数，先弄清「谁在干什么」，而不必拉几千条细节。Agent 很多时用 `summary_mode=preview`。
+3. **`memory_summary_get(agent_id=...)`** / `GET /v1/memory-summaries/{agent_id}` —— 读取目标 Agent 完整（可能很长）的概要，**优先级最高的数据源**。
+4. **然后才取细节** —— `memory_search(memory_layer="event", category=..., owner_agent_id=...)` 取某主题当前状态，`memory_search(memory_layer="timeline", occurred_from=..., occurred_to=...)` 取某段时间的历史，`memory_revisions(memory_id=...)` 看概要 / 主题的演变。
+
+`memory_context(detail_level="summary")` / `GET /v1/memory-context?detail_level=summary` 把第 3 步与层说明、计数、`reading_order` 和可直接照抄的 `next_calls` 一起返回；`detail_level="full"`（默认，兼容旧行为）才附带近期时间线与匹配的事件行。
+
+写入顺序正好相反：先用 `memory_timeline_write` 追加带时间的事实，用 `memory_event_write` 维护主题当前状态，最后用 `memory_summary_write` 刷新**唯一那一份**全量概要，保证总览不过时。
+
+| 需求 | 先读 | 再调用 |
 |---|---|---|
-| `summary` | Agent 当前知识的 Markdown 概要 | 每个 Agent 一份有效概要；更新需传 `expected_version`，并保留版本快照 |
-| `timeline` | 带时间的事件或观察 | 只追加；纠错时新建事件并填写 `supersedes_memory_id` |
-| `event` | 按类别持续维护的事件记忆，如某个开发项目、理财计划或健康事项 | 每个 Agent / 类别 / `event_key` 一份有效记忆；更新需传 `expected_version`，并保留版本快照 |
-
-通过旧 `memory_write` 创建的记录仍可作为 `legacy` 层检索。`memory_search` 默认搜索全部记忆层，时间线筛选使用带时区的 ISO 8601 时间。
-
-事件记忆按自由文本的 `category` 和稳定的 `event_key` 归类，惯例是 `development` / `finance` / `health`（开发 / 理财 / 健康），也支持任意字符串。`GET /v1/categories`（或 `memory_categories`）列出在用的类别；`GET /v1/memory-context`（或 `memory_context`）一次返回某个 Agent 的概要、时间记忆、事件记忆和类别，推荐作为 Agent 会话的第一次调用。
-
-每层记忆写入时都会分块并生成向量。检索先按租户、记忆层、类别、事件键、时间范围和记忆版本过滤，再对关键词候选与余弦相似的分块做 RRF 融合排序；向量绑定记忆版本，更新后不会召回旧分块。若嵌入服务失败，分块标记 `failed`，正文照常写入、关键词检索仍可用；`POST /v1/admin/reindex` 可在不改动正文的前提下重建缺失或失败的向量。
+| 了解别的 Agent / 整个团队 | `memory_agents` | `memory_summary_get(agent_id=...)` |
+| 某个项目或主题的当前状态 | 该 Agent 的概要 | `memory_search(memory_layer="event", category=..., event_key=...)` |
+| 某段时间发生了什么 | 该 Agent 的概要 | `memory_search(memory_layer="timeline", occurred_from=..., occurred_to=...)` |
+| 概要是怎么演变的 | 该 Agent 的概要 | `memory_revisions(memory_id=...)` |
+| 不确定该用哪一层 | `memory_guide` | 按 `reading_order` / `writing_order` 执行 |
 
 ## 工作原理
 
@@ -250,11 +277,26 @@ curl -X POST https://<你的域名>/v1/admin/credentials \
 ### 可复制给 Agent 的指令
 
 ```text
-使用 AllMemoryMCP 管理共享记忆。
-- 先调用 memory_whoami 记住自己的 agent_id，它由你的 token 决定。
-- 写入前先调用 memory_search，尽量避免重复记忆。
+使用 AllMemoryMCP 管理共享记忆。不确定某层含义时先调用 memory_guide。
+
+【三层记忆模型】
+- summary = 每个 Agent 有且仅有一份、可以比较长的 Markdown 全量概要，是它「所有记忆的总体」，写清它是谁、在做什么、关键决策与细节线索，不是一条记忆。读取优先级最高：别的 Agent 先读它就知道你在干什么。写入是整体替换，绝不会生成第二份；只有自己能写。
+- event = 某个持续主题的当前状态文档，按 (category, event_key) 区分，如 (development, 项目名)、(finance, 配置)、(health, 治疗)；版本化并保留历史。
+- timeline = 只追加、带 occurred_at 的时间记忆，回答「什么时候发生了什么」；不可改写，纠错要追加 supersedes 记录。
+
+【读取顺序（渐进展开）】
+1. memory_whoami 确认身份。
+2. memory_agents 一次看到所有 Agent 的唯一概要。
+3. memory_summary_get(agent_id=...) 读取目标 Agent 的完整概要。
+4. 之后才用 memory_search(memory_layer="event"|"timeline", owner_agent_id=...) 取需要的细节；memory_context(detail_level="summary") 会附带层说明和可照抄的 next_calls。
+
+【写入顺序】
+1. memory_timeline_write 追加带时间的事实。
+2. memory_event_write 维护主题当前状态。
+3. memory_summary_write 刷新唯一那份全量概要（单写入方可省略 expected_version）。
+
 - 总结搜索结果时保留 owner_agent_id 来源信息。
-- 使用 memory_write 新增记忆；只能更新或删除自己上传的记忆。
+- memory_write 只创建旧版自由格式记录；只能更新或删除自己上传的记忆。
 - 私下协商使用 negotiation_start，channel="direct" 并指定 recipients；全局讨论使用 channel="global"。
 - 使用 negotiation_post 追加留言；留言不会自动修改记忆。
 - 只有线程创建者可以结束协商。协商结论需要另行明确写入记忆。
@@ -311,15 +353,17 @@ curl -X POST http://127.0.0.1:8099/v1/negotiations \
 | `GET` | `/health` | 健康检查（无需认证） |
 | `GET`, `POST` | `/v1/memories` | 搜索 / 列举、创建记忆 |
 | `GET`, `PATCH`, `DELETE` | `/v1/memories/{memory_id}` | 读取、更新、软删除 |
-| `GET`, `PUT` | `/v1/memory-summary` | 读取或按版本更新当前 Agent 的 Markdown 概要 |
+| `GET`, `PUT` | `/v1/memory-summary` | 读取或整体替换当前 Agent 唯一那份全量概要 |
 | `GET` | `/v1/memory-summaries/{agent_id}` | 读取同租户另一 Agent 的概要 |
 | `GET`, `POST` | `/v1/timeline-memories` | 搜索或追加时间记忆 |
 | `GET`, `PUT` | `/v1/event-memories` | 搜索或创建 / 更新带版本的类别事件记忆 |
 | `PATCH` | `/v1/event-memories/{memory_id}` | 传入 `expected_version` 更新自己拥有的事件记忆 |
 | `GET` | `/v1/memories/{memory_id}/revisions` | 读取概要 / 事件记忆的版本快照 |
-| `GET` | `/v1/whoami` | 返回当前 token 对应的身份（租户、Agent id、scopes） |
+| `GET` | `/v1/whoami` | 返回当前 token 对应的身份（租户、Agent id、scopes），附带三层精简说明 |
+| `GET` | `/v1/memory-guide` | 机器可读的三层记忆契约（含义、数量约束、读写顺序） |
+| `GET` | `/v1/agents` | 列出本租户所有 Agent 及各自唯一概要（跨 Agent 第一入口） |
 | `GET` | `/v1/categories` | 列出在用类别及事件 / 时间记忆数量 |
-| `GET` | `/v1/memory-context` | 一次取回某 Agent 的概要、时间记忆、事件记忆和类别 |
+| `GET` | `/v1/memory-context` | 优先返回概要；`detail_level=summary` 不返回细节行并给出 `next_calls` |
 | `GET`, `POST` | `/v1/negotiations` | 列举可见线程、发起线程 |
 | `GET` | `/v1/negotiations/{thread_id}` | 读取线程与消息 |
 | `POST` | `/v1/negotiations/{thread_id}/messages` | 追加消息 |
@@ -335,10 +379,11 @@ curl -X POST http://127.0.0.1:8099/v1/negotiations \
 结构化记忆调用示例：
 
 ```sh
-# 创建时可省略 expected_version，更新时使用上次响应中的版本号，避免覆盖较新的修改。
+# 创建或整体替换唯一那份全量概要。单写入方可省略 expected_version；
+# 多写入方并发时显式传入，冲突返回 409，重新读取后合并重试。
 curl -X PUT http://127.0.0.1:8099/v1/memory-summary \
   -H 'Authorization: Bearer <agent-token>' -H 'Content-Type: application/json' \
-  -d '{"markdown":"# 当前上下文：正在开发记忆服务。","expected_version":0}'
+  -d '{"markdown":"# 我是谁\n记忆服务 Agent。\n\n## 正在做\n三层记忆改造。\n\n## 细节\n见 development 类别的事件与时间记忆。"}'
 
 curl -X POST http://127.0.0.1:8099/v1/timeline-memories \
   -H 'Authorization: Bearer <agent-token>' -H 'Content-Type: application/json' \
@@ -349,11 +394,19 @@ curl -X PUT http://127.0.0.1:8099/v1/event-memories \
   -d '{"category":"development","event_key":"memory-storage","title":"记忆存储方案","content_markdown":"## 当前方案：使用版本化事件记忆与向量分块。"}'
 ```
 
-使用过期 `expected_version` 更新会返回 `409`；请重新读取最新记忆、合并后再提交。
+使用过期 `expected_version` 更新会返回 `409`；请重新读取最新记忆、合并后再提交。省略时服务会自动读取当前版本。
 
-一次取回某个 Agent 的全部上下文（推荐会话开始时调用）、查看类别、以及切换嵌入服务后重建向量：
+先取契约、看清所有 Agent 在做什么，再优先读概要、按 `next_calls` 取细节，以及切换嵌入服务后重建向量：
 
 ```sh
+curl http://127.0.0.1:8099/v1/memory-guide -H 'Authorization: Bearer <agent-token>'
+
+curl 'http://127.0.0.1:8099/v1/agents?summary_mode=full' \
+  -H 'Authorization: Bearer <agent-token>'
+
+curl 'http://127.0.0.1:8099/v1/memory-context?detail_level=summary' \
+  -H 'Authorization: Bearer <agent-token>'
+
 curl 'http://127.0.0.1:8099/v1/memory-context?category=finance' \
   -H 'Authorization: Bearer <agent-token>'
 
@@ -370,14 +423,16 @@ curl -X POST 'http://127.0.0.1:8099/v1/admin/reindex?batch_size=200' \
 |---|---|
 | `memory_search` | 搜索租户内可见记忆，返回上传者信息 |
 | `memory_get` | 按 ID 读取记忆 |
-| `memory_whoami` | 确认当前连接使用的 `agent_id`、租户与 scopes |
-| `memory_write` | 创建一条归属当前 Agent 的记忆 |
+| `memory_whoami` | 确认当前连接使用的 `agent_id`、租户与 scopes，附带三层精简说明 |
+| `memory_guide` | 完整的三层契约：summary / event / timeline 分别是什么、怎么读 |
+| `memory_agents` | 列出所有 Agent 及各自唯一概要 —— 跨 Agent 第一入口 |
+| `memory_write` | 创建一条归属当前 Agent 的旧版自由格式记忆 |
 | `memory_update` | 只更新当前 Agent 上传的记忆 |
 | `memory_delete` | 只软删除当前 Agent 上传的记忆 |
-| `memory_summary_get` / `memory_summary_write` | 读取概要，或创建 / 按版本更新自己的概要 |
-| `memory_timeline_write` | 追加带时间的事件或纠错事件 |
-| `memory_event_write` | 创建 / 按版本更新类别事件记忆（开发、理财、健康……） |
-| `memory_context` | 一次取回某 Agent 的概要、时间记忆、事件记忆和类别 |
+| `memory_summary_get` / `memory_summary_write` | 读取唯一全量概要，或整体替换自己的那一份（不会生成第二条） |
+| `memory_timeline_write` | 追加一条时间记忆或纠错记录 |
+| `memory_event_write` | 创建 / 版本更新某个 `(category, event_key)` 主题的当前状态 |
+| `memory_context` | 优先返回概要；`detail_level=summary|full`，并附带 `layers`、`reading_order`、`next_calls` |
 | `memory_categories` | 列出当前在用的类别 |
 | `memory_revisions` | 读取可见的概要 / 事件记忆版本快照 |
 | `negotiation_start` | 发起定向或全局讨论 |

@@ -21,6 +21,15 @@
 - 直接/全体協議スレッド。メッセージは追記型で記憶を自動変更しない
 - scope、有効期限、失効、ローテーションに対応した管理資格情報
 - SQLite 標準（オフラインのベクトル検索が既定で有効）。PostgreSQL + pgvector による意味検索も選択可能
+- 実行時に 3 層モデルを説明する `memory_guide` と、全エージェントの概要を一覧する `memory_agents`
+
+## 記憶モデルと読み取り順序
+
+- `summary`：**エージェントごとに 1 つだけ**の長い Markdown ドキュメント。そのエージェントの**全記憶の総覧**（誰か、何をしているか、決定事項、詳細へのポインタ）であり、1 件の記憶ではない。書き込みは文書全体を置き換え、2 つ目は決して作られない。**最優先で読む**。他のエージェントはこれを読むだけで「何をしているか」を把握できる。
+- `event`：`(category, event_key)` で識別する継続テーマの**現在の状態**（開発・資産運用・健康など）。バージョン管理され、履歴が残る。
+- `timeline`：発生時刻付きの追記専用ログ。「いつ何があったか」に答える。訂正は `supersedes_memory_id` を付けて追記する。
+
+読み取り順序：`memory_whoami` → `memory_agents`（全員の概要を一度に）→ `memory_summary_get(agent_id=...)` → 必要になって初めて `memory_search(memory_layer="event"|"timeline", owner_agent_id=...)`。詳しい契約は `memory_guide`、`GET /v1/memory-guide` で取得でき、`memory_context(detail_level="summary")` は概要・層の説明・次の呼び出し候補を返す。書き込みは `memory_timeline_write` → `memory_event_write` → `memory_summary_write`（唯一の概要を更新）の順。
 
 ## ローカルで始める
 

@@ -20,6 +20,15 @@
 - 직접/전체 협의 스레드와 추가 전용 메시지
 - scope, 만료, 폐기, 교체를 지원하는 관리형 자격 증명
 - SQLite 기본 지원(오프라인 벡터 검색 기본 활성화), PostgreSQL + pgvector 의미 검색 선택 지원
+- 실행 시 3계층 모델을 설명하는 `memory_guide`와 모든 에이전트의 요약을 한 번에 보여 주는 `memory_agents`
+
+## 메모리 계층과 읽기 순서
+
+- `summary`: **에이전트마다 단 하나**인 긴 Markdown 문서. 그 에이전트의 **전체 기억에 대한 총람**(누구인지, 무엇을 하는지, 결정 사항, 세부 정보에 대한 포인터)이며 개별 기억 한 건이 아니다. 쓰면 문서 전체가 **교체**되고 두 번째 요약은 절대 생기지 않는다. **가장 먼저 읽어야 할 우선순위 1위**이며, 다른 에이전트는 이것만으로 상대가 무엇을 하는지 알 수 있다.
+- `event`: `(category, event_key)`로 식별되는 지속 주제의 **현재 상태**(개발·재무·건강 등). 버전 관리되며 개정 이력이 남는다.
+- `timeline`: 발생 시각이 있는 추가 전용 기록. "언제 무슨 일이 있었는가"에 답한다. 정정은 `supersedes_memory_id`로 새 레코드를 추가한다.
+
+읽기 순서: `memory_whoami` → `memory_agents`(모든 에이전트의 요약을 한 번에) → `memory_summary_get(agent_id=...)` → **그 다음에만** `memory_search(memory_layer="event"|"timeline", owner_agent_id=...)`. 전체 계약은 `memory_guide` / `GET /v1/memory-guide`로 얻고, `memory_context(detail_level="summary")`는 요약·계층 설명·다음 호출 후보를 함께 반환한다. 쓰기 순서는 `memory_timeline_write` → `memory_event_write` → `memory_summary_write`(유일한 요약 갱신)이다.
 
 ## 로컬 시작
 

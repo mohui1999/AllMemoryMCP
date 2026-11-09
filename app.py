@@ -11,17 +11,17 @@ from pydantic import BaseModel, Field
 from memory_service import (
     InvalidInput, Principal, ScopeError, VersionConflict, authenticate, create_memory,
     create_timeline_memory, delete_memory, get_agent_summary, get_memory,
-    get_memory_context, get_thread, initialize, list_categories,
-    list_memory_revisions, list_threads, post_message, reindex_memory_chunks,
-    resolve_thread, search_memories, start_thread, update_memory,
-    update_event_memory, upsert_agent_summary, upsert_event_memory,
+    get_memory_context, get_thread, initialize, list_agents, list_categories,
+    list_memory_revisions, list_threads, memory_guide, post_message,
+    reindex_memory_chunks, resolve_thread, search_memories, start_thread,
+    update_memory, update_event_memory, upsert_agent_summary, upsert_event_memory,
 )
 from credentials import (
     authenticate_admin, delete_credential, issue_credential, list_credentials,
     revoke_credential, rotate_credential, verify_token,
 )
 
-app = FastAPI(title="AllMemoryMCP API", version="0.4.0",
+app = FastAPI(title="AllMemoryMCP API", version="0.5.0",
               description="Global cross-agent memory and negotiation API (multi-tenant)")
 WEB_DIR = Path(__file__).parent / "web"
 app.mount("/assets", StaticFiles(directory=WEB_DIR), name="viewer-assets")
@@ -158,10 +158,41 @@ def health() -> dict[str, str]:
 
 @app.get("/v1/whoami")
 def whoami(principal: Principal = Depends(current_principal)) -> dict:
-    """Return the identity behind this token. Use it to check that every Agent
-    has its own credential instead of sharing one identity."""
+    """Return the identity behind this token, plus a compact memory-model hint.
+
+    Use it to check that every Agent has its own credential instead of sharing
+    one identity, and to learn the three layers without a separate call.
+    """
     return {"tenant_id": principal.tenant_id, "agent_id": principal.agent_id,
-            "scopes": list(principal.scopes)}
+            "scopes": list(principal.scopes),
+            "memory_model": {
+                "summary": "ONE long document per Agent = overview of ALL its memories. Read this FIRST.",
+                "event": "current state of one subject, keyed by (category, event_key).",
+                "timeline": "append-only dated log entry with occurred_at.",
+                "priority": "summary > event/timeline details on demand",
+            },
+            "guide": "GET /v1/memory-guide",
+            "agent_directory": "GET /v1/agents"}
+
+
+@app.get("/v1/memory-guide")
+def memory_model_guide(principal: Principal = Depends(current_principal)):
+    """The machine-readable contract for summary / timeline / event memories.
+
+    Agents that do not know which layer to read or write should call this first.
+    """
+    return memory_guide(principal)
+
+
+@app.get("/v1/agents")
+def agent_directory(summary_mode: str = "full", limit: int = Query(default=50, ge=1, le=100),
+                    principal: Principal = Depends(current_principal)):
+    """List every Agent in this tenant WITH its one summary (cross-agent entry point).
+
+    `summary_mode=full|preview|none` controls how much of each potentially long
+    summary is returned. Read these overviews before fetching detailed rows.
+    """
+    return list_agents(principal, summary_mode, limit)
 
 
 @app.get("/v1/memories")
@@ -269,10 +300,17 @@ def memory_context(agent_id: str | None = None, query: str = "",
                    category: str | None = None,
                    timeline_limit: int = Query(default=10, ge=0, le=50),
                    event_limit: int = Query(default=10, ge=0, le=50),
+                   detail_level: str = "full",
                    principal: Principal = Depends(current_principal)):
-    """One call to load an Agent's summary, timeline, event memories and categories."""
+    """Load one Agent's memory picture, summary first.
+
+    `detail_level=summary` returns only the single overview plus categories,
+    counts and ready-to-use `next_calls` for drilling into event/timeline rows.
+    `detail_level=full` (default) also includes timeline and event rows.
+    """
     return get_memory_context(
         principal, agent_id, query, category, timeline_limit, event_limit,
+        detail_level,
     )
 
 

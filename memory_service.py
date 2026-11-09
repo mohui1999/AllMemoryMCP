@@ -25,6 +25,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from sqlalchemy import func, or_, select, update
+from sqlalchemy.exc import IntegrityError
 
 from db import (
     AuditLog, Memory, MemoryChunk, MemoryRevision, NegotiationMessage,
@@ -226,7 +227,7 @@ def _active_summary(s, tenant_id: str, owner_agent_id: str) -> StructuredMemory 
         StructuredMemory.owner_agent_id == owner_agent_id,
         StructuredMemory.memory_layer == "summary",
         StructuredMemory.deleted_at.is_(None),
-    )).scalars().first()
+    ).order_by(StructuredMemory.updated_at.desc())).scalars().first()
 
 
 def get_agent_summary(principal: Principal, agent_id: str) -> dict[str, Any] | None:
@@ -240,7 +241,18 @@ def upsert_agent_summary(principal: Principal, markdown: str,
                          source_watermark: str | None = None,
                          expected_version: int | None = None,
                          change_note: str | None = None) -> dict[str, Any]:
-    """Create an Agent's summary or replace it with optimistic concurrency."""
+    """Create or REPLACE the Agent's ONE summary (its whole-memory overview).
+
+    There is exactly one active summary per (tenant_id, agent_id), enforced by a
+    partial unique index. Writing again never creates a second row: it replaces
+    the whole Markdown document and appends a revision snapshot. The document is
+    intentionally allowed to be long — it is the digest of ALL of this Agent's
+    memories and the first thing other Agents should read.
+
+    ``expected_version`` is optional: when omitted, the current version is read
+    automatically and the update still uses an optimistic-lock WHERE clause. Pass
+    it explicitly when two writers may update the same summary concurrently.
+    """
     require_scope(principal, "write")
     markdown = markdown.strip()
     if not markdown:
@@ -250,48 +262,70 @@ def upsert_agent_summary(principal: Principal, markdown: str,
     if source_watermark and len(source_watermark) > 40:
         raise InvalidInput("source_watermark exceeds 40 characters")
     chunks = _prepare_memory_chunks(markdown)
-    with session() as s:
-        current = _active_summary(s, principal.tenant_id, principal.agent_id)
-        ts = now()
-        if current is None:
-            if expected_version not in (None, 0):
-                raise VersionConflict("summary does not exist; expected_version must be 0")
-            memory = StructuredMemory(
-                id=str(uuid4()), tenant_id=principal.tenant_id,
-                owner_agent_id=principal.agent_id, memory_layer="summary",
-                title=f"{principal.agent_id} memory summary", content=markdown,
-                source_watermark=source_watermark, tags="[]", version=1,
-                created_at=ts, updated_at=ts,
-            )
-            s.add(memory)
-            s.flush()
-            _record_revision(s, memory, change_note or "Initial summary")
-            _replace_memory_chunks(s, memory, chunks)
-            _audit(s, principal, "create", "summary", memory.id)
-        else:
-            if expected_version is None:
-                raise VersionConflict("expected_version is required when updating a summary")
-            if current.version != expected_version:
-                raise VersionConflict(f"summary is at version {current.version}")
-            next_version = current.version + 1
-            result = s.execute(update(StructuredMemory).where(
-                StructuredMemory.id == current.id,
-                StructuredMemory.version == expected_version,
-                StructuredMemory.deleted_at.is_(None),
-            ).values(
-                content=markdown, source_watermark=source_watermark,
-                version=next_version, updated_at=ts,
-            ))
-            if result.rowcount != 1:
-                raise VersionConflict("summary changed during update; read it again")
-            s.refresh(current)
-            _record_revision(s, current, change_note)
-            _replace_memory_chunks(s, current, chunks)
-            _audit(s, principal, "update", "summary", current.id,
-                   {"version": next_version})
-            memory = current
-        s.flush()
-        return structured_memory_to_dict(memory)
+
+    for attempt in range(2):
+        auto_version = False
+        try:
+            with session() as s:
+                current = _active_summary(s, principal.tenant_id, principal.agent_id)
+                ts = now()
+                if current is None:
+                    if expected_version not in (None, 0):
+                        raise VersionConflict("summary does not exist; expected_version must be 0")
+                    memory = StructuredMemory(
+                        id=str(uuid4()), tenant_id=principal.tenant_id,
+                        owner_agent_id=principal.agent_id, memory_layer="summary",
+                        title=f"{principal.agent_id} memory summary", content=markdown,
+                        source_watermark=source_watermark, tags="[]", version=1,
+                        created_at=ts, updated_at=ts,
+                    )
+                    s.add(memory)
+                    s.flush()
+                    _record_revision(s, memory, change_note or "Initial summary")
+                    _replace_memory_chunks(s, memory, chunks)
+                    _audit(s, principal, "create", "summary", memory.id)
+                else:
+                    effective_version = expected_version
+                    if effective_version is None:
+                        effective_version = current.version
+                        auto_version = True
+                    if current.version != effective_version:
+                        raise VersionConflict(f"summary is at version {current.version}")
+                    next_version = current.version + 1
+                    result = s.execute(update(StructuredMemory).where(
+                        StructuredMemory.id == current.id,
+                        StructuredMemory.version == effective_version,
+                        StructuredMemory.deleted_at.is_(None),
+                    ).values(
+                        content=markdown, source_watermark=source_watermark,
+                        version=next_version, updated_at=ts,
+                    ))
+                    if result.rowcount != 1:
+                        raise VersionConflict("summary changed during update; read it again")
+                    s.refresh(current)
+                    _record_revision(s, current, change_note)
+                    _replace_memory_chunks(s, current, chunks)
+                    _audit(s, principal, "update", "summary", current.id,
+                           {"version": next_version})
+                    memory = current
+                s.flush()
+                payload = structured_memory_to_dict(memory)
+                payload["auto_version"] = auto_version
+                payload["layer_guide"] = {
+                    "layer": "summary",
+                    "meaning": LAYER_GUIDE[0]["meaning"],
+                    "cardinality": LAYER_GUIDE[0]["cardinality"],
+                    "hint": "This is the ONLY summary for this Agent. It was replaced, not appended; previous versions are in memory_revisions.",
+                }
+                return payload
+        except (IntegrityError, VersionConflict):
+            # A concurrent first write may have won the unique index, or changed
+            # the version between our read and update. Retry once against the
+            # fresh row when the caller did not pin a version.
+            if attempt == 0 and expected_version is None:
+                continue
+            raise
+    raise VersionConflict("summary changed during update; read it again")
 
 
 def create_timeline_memory(principal: Principal, title: str, content: str,
@@ -461,6 +495,224 @@ def list_memory_revisions(principal: Principal, memory_id: str) -> list[dict[str
         return [memory_revision_to_dict(row) for row in rows]
 
 
+# --------------------------------------------------------------------------- #
+# Memory model: a machine-readable contract Agents can ask for at runtime
+# --------------------------------------------------------------------------- #
+# The three layers are easy to confuse from their names alone. Every Agent can
+# retrieve this contract with memory_guide / GET /v1/memory-guide, and the most
+# important parts are also attached to whoami / memory_context / search results.
+MEMORY_MODEL_VERSION = "1.0"
+
+LAYER_GUIDE: list[dict[str, Any]] = [
+    {
+        "layer": "summary",
+        "priority": 1,
+        "meaning": (
+            "ONE long Markdown document that is the Agent's overview of ALL of its "
+            "memories: who it is, what it is working on, key decisions, conventions, "
+            "current state, and pointers to details. It is a digest of the whole "
+            "memory set, not a single memory entry."
+        ),
+        "meaning_zh": "每个 Agent 只有一条，是它全部记忆的总体概要（可以比较长），别人读它就能知道这个 Agent 在干什么。",
+        "cardinality": "exactly ONE active row per (tenant_id, agent_id); enforced by a unique index",
+        "length": "may be long, up to 100000 characters; a structured Markdown overview is recommended",
+        "read_with": "memory_agents (all Agents at once), memory_summary_get(agent_id), memory_context",
+        "write_with": "memory_summary_write",
+        "update_rule": "writing REPLACES the entire document; version snapshots are kept; expected_version is optional",
+        "use_when": "FIRST thing to read, especially before reading another Agent's details",
+    },
+    {
+        "layer": "timeline",
+        "priority": 3,
+        "meaning": (
+            "An append-only, dated log entry: what happened at a specific time. Each "
+            "row has occurred_at (timezone-qualified ISO 8601) and an optional category."
+        ),
+        "meaning_zh": "时间记忆：按发生时间追加的一条条记录，回答「什么时候发生了什么」，不可改写。",
+        "cardinality": "many rows per Agent, one per dated event",
+        "length": "short, up to 20000 characters",
+        "read_with": "memory_search(memory_layer='timeline', occurred_from=..., occurred_to=..., category=...)",
+        "write_with": "memory_timeline_write",
+        "update_rule": "immutable; a correction appends a new row with supersedes_memory_id",
+        "use_when": "you need the dated history behind a summary, or a specific time window",
+    },
+    {
+        "layer": "event",
+        "priority": 2,
+        "meaning": (
+            "The CURRENT state of one long-running subject, identified by "
+            "(category, event_key). Examples: (development, AllMemoryMCP), "
+            "(finance, long-term allocation), (health, allergy treatment). It is a "
+            "living document, not a log entry: updates replace its content and keep "
+            "revisions."
+        ),
+        "meaning_zh": "事件记忆：某个持续主题（开发/理财/健康等）的最新状态文档，按 category + event_key 区分，可反复更新并保留历史版本。",
+        "cardinality": "ONE active row per (tenant_id, agent_id, category, event_key)",
+        "length": "medium to long, up to 50000 characters",
+        "read_with": "memory_search(memory_layer='event', category=..., event_key=...), memory_revisions(memory_id)",
+        "write_with": "memory_event_write",
+        "update_rule": "upsert by (category, event_key); use expected_version to avoid lost updates",
+        "use_when": "you need the detailed current state of one subject named in a summary",
+    },
+    {
+        "layer": "legacy",
+        "priority": 4,
+        "meaning": "Older free-form records created through memory_write; kept searchable for compatibility.",
+        "meaning_zh": "旧版自由格式记忆，仅为兼容保留。",
+        "cardinality": "many rows per Agent",
+        "length": "up to 20000 characters",
+        "read_with": "memory_search(memory_layer='legacy')",
+        "write_with": "memory_write",
+        "update_rule": "normal versioned updates",
+        "use_when": "only when a legacy record is referenced",
+    },
+]
+
+MEMORY_READING_ORDER: list[dict[str, Any]] = [
+    {"step": 1, "tool": "memory_whoami", "why": "Confirm which Agent identity this connection uses."},
+    {"step": 2, "tool": "memory_agents", "why": "Read EVERY Agent's single summary first to learn who is doing what."},
+    {"step": 3, "tool": "memory_summary_get(agent_id=...)", "why": "Read the full long summary of the Agent you care about. Highest priority source."},
+    {"step": 4, "tool": "memory_search(memory_layer='event', category=..., query=...)", "why": "Then fetch the detailed current state of a subject named in the summary."},
+    {"step": 5, "tool": "memory_search(memory_layer='timeline', occurred_from=..., occurred_to=...)", "why": "Then fetch the dated history for a period or event."},
+    {"step": 6, "tool": "memory_revisions(memory_id=...)", "why": "Optional: inspect how a summary or event document changed."},
+]
+
+MEMORY_WRITING_ORDER: list[dict[str, Any]] = [
+    {"step": 1, "tool": "memory_timeline_write", "why": "Append dated facts as they happen."},
+    {"step": 2, "tool": "memory_event_write", "why": "Keep the current state of each long-running subject up to date."},
+    {"step": 3, "tool": "memory_summary_write", "why": "Periodically REPLACE your one summary with a refreshed overview of ALL your memories."},
+]
+
+MEMORY_RULES: list[str] = [
+    "Every Agent has exactly ONE summary; it is a global digest of all its memories and may be long.",
+    "Read another Agent's summary FIRST. Only fetch its event/timeline rows for the details you actually need.",
+    "Other Agents can read a summary but only its owner can replace or delete it.",
+    "A timeline row is immutable; corrections append a new row that supersedes the old one.",
+    "An event memory is keyed by (category, event_key); use expected_version when updating.",
+    "Do not create a second summary to record new information: update the existing one.",
+]
+
+
+def memory_guide(principal: Principal | None = None) -> dict[str, Any]:
+    """Return the three-layer memory contract, in a form an Agent can act on."""
+    if principal is not None:
+        require_scope(principal, "read")
+    return {
+        "model_version": MEMORY_MODEL_VERSION,
+        "principle": (
+            "summary is the single, long, whole-memory overview of one Agent and has "
+            "the highest read priority; event is the detailed current state per subject; "
+            "timeline is the append-only dated history. Read the summary first, then "
+            "drill into event/timeline only for what you need."
+        ),
+        "principle_zh": "每个 Agent 只有一条 summary，是全部记忆的总览（可长），读取优先级最高；先看它知道对方在干什么，再按需查 event / timeline 细节。",
+        "layers": [dict(item) for item in LAYER_GUIDE],
+        "reading_order": [dict(item) for item in MEMORY_READING_ORDER],
+        "writing_order": [dict(item) for item in MEMORY_WRITING_ORDER],
+        "rules": list(MEMORY_RULES),
+    }
+
+
+def list_agents(principal: Principal, summary_mode: str = "full",
+                limit: int = 50) -> dict[str, Any]:
+    """Directory of Agents in this tenant, each with its ONE summary up front.
+
+    This is the cross-agent entry point: instead of guessing which Agent to
+    inspect, a caller sees every Agent's global overview in one call and only
+    then drills into its event/timeline rows.
+    """
+    require_scope(principal, "read")
+    if summary_mode not in ("full", "preview", "none"):
+        raise InvalidInput("summary_mode must be full, preview, or none")
+    limit = max(1, min(limit, 100))
+    with session() as s:
+        rows = s.execute(
+            select(
+                StructuredMemory.owner_agent_id,
+                StructuredMemory.memory_layer,
+                StructuredMemory.category,
+                func.count().label("count"),
+                func.max(StructuredMemory.updated_at).label("last_updated_at"),
+            ).where(
+                StructuredMemory.tenant_id == principal.tenant_id,
+                StructuredMemory.deleted_at.is_(None),
+                StructuredMemory.superseded_at.is_(None),
+            ).group_by(
+                StructuredMemory.owner_agent_id,
+                StructuredMemory.memory_layer,
+                StructuredMemory.category,
+            )
+        ).all()
+        legacy_rows = s.execute(
+            select(
+                Memory.owner_agent_id,
+                func.count().label("count"),
+                func.max(Memory.updated_at).label("last_updated_at"),
+            ).where(
+                Memory.tenant_id == principal.tenant_id,
+                Memory.deleted_at.is_(None),
+            ).group_by(Memory.owner_agent_id)
+        ).all()
+
+    agents: dict[str, dict[str, Any]] = {}
+
+    def entry(agent_id: str) -> dict[str, Any]:
+        return agents.setdefault(agent_id, {
+            "agent_id": agent_id, "summary": None, "timeline_count": 0,
+            "event_count": 0, "legacy_count": 0, "categories": set(),
+            "last_updated_at": "",
+        })
+
+    for agent_id, layer, category, count, last_updated in rows:
+        item = entry(agent_id)
+        if layer == "timeline":
+            item["timeline_count"] += int(count)
+        elif layer == "event":
+            item["event_count"] += int(count)
+        if category:
+            item["categories"].add(category)
+        item["last_updated_at"] = max(item["last_updated_at"], last_updated or "")
+    for agent_id, count, last_updated in legacy_rows:
+        item = entry(agent_id)
+        item["legacy_count"] += int(count)
+        item["last_updated_at"] = max(item["last_updated_at"], last_updated or "")
+
+    with session() as s:
+        for item in agents.values():
+            row = _active_summary(s, principal.tenant_id, item["agent_id"])
+            if row and summary_mode != "none":
+                summary = structured_memory_to_dict(row)
+                if summary_mode == "preview" and len(summary["content"]) > 600:
+                    summary["content"] = summary["content"][:600] + " …"
+                    summary["content_truncated"] = True
+                item["summary"] = summary
+            item["has_summary"] = row is not None
+            item["summary_version"] = row.version if row else None
+            item["summary_updated_at"] = row.updated_at if row else None
+            item["categories"] = sorted(item["categories"])
+
+    ordered = sorted(
+        agents.values(),
+        key=lambda item: (item["has_summary"], item["last_updated_at"], item["agent_id"]),
+        reverse=True,
+    )[:limit]
+    return {
+        "tenant_id": principal.tenant_id,
+        "caller_agent_id": principal.agent_id,
+        "count": len(ordered),
+        "summary_mode": summary_mode,
+        "items": ordered,
+        "model_version": MEMORY_MODEL_VERSION,
+        "layers": [dict(item) for item in LAYER_GUIDE if item["layer"] != "legacy"],
+        "reading_order": [dict(item) for item in MEMORY_READING_ORDER[:4]],
+        "hint": (
+            "Read item.summary first: it is that Agent's ONLY whole-memory overview "
+            "and tells you what it is working on. For details, call memory_search "
+            "with memory_layer='event' or 'timeline' and owner_agent_id set to that Agent."
+        ),
+    }
+
+
 # Common starting points for event memories. Categories are free-form strings;
 # this list only documents the convention used by the bundled agent instructions.
 SUGGESTED_CATEGORIES = ("development", "finance", "health")
@@ -499,31 +751,83 @@ def list_categories(principal: Principal, agent_id: str | None = None) -> list[d
     )
 
 
+def _context_next_calls(target: str, categories: list[str]) -> list[dict[str, Any]]:
+    """Concrete, copyable follow-up calls for drilling into the details."""
+    calls: list[dict[str, Any]] = [
+        {"tool": "memory_summary_get", "args": {"agent_id": target},
+         "why": "Re-read this Agent's ONLY whole-memory overview at any time."},
+        {"tool": "memory_search",
+         "args": {"query": "<subject from the summary>", "memory_layer": "event",
+                  "owner_agent_id": target},
+         "why": "Fetch the detailed CURRENT STATE of one subject (category/event_key)."},
+        {"tool": "memory_search",
+         "args": {"memory_layer": "timeline", "owner_agent_id": target,
+                  "occurred_from": "<ISO 8601>", "occurred_to": "<ISO 8601>"},
+         "why": "Fetch the append-only dated history for a period."},
+    ]
+    for category in categories[:3]:
+        calls.append({
+            "tool": "memory_search",
+            "args": {"memory_layer": "event", "owner_agent_id": target,
+                     "category": category},
+            "why": f"All current event knowledge in the '{category}' category.",
+        })
+    return calls
+
+
 def get_memory_context(principal: Principal, agent_id: str | None = None,
                        query: str = "", category: str | None = None,
-                       timeline_limit: int = 10, event_limit: int = 10) -> dict[str, Any]:
-    """Load one Agent's whole memory picture in a single call.
+                       timeline_limit: int = 10, event_limit: int = 10,
+                       detail_level: str = "full") -> dict[str, Any]:
+    """Load one Agent's memory picture, with the summary deliberately first.
 
-    Returns the Markdown summary, recent timeline events, matching event memories
-    (both through the same hybrid retrieval as memory_search), and the categories
-    currently in use. This is the recommended first call when an Agent starts work.
+    ``detail_level='summary'`` returns only the high-priority overview plus the
+    categories in use; use the returned ``next_calls`` to fetch event/timeline
+    details on demand. ``full`` (default) also includes recent timeline rows and
+    matching event rows for backward compatibility.
     """
     require_scope(principal, "read")
+    if detail_level not in ("full", "summary"):
+        raise InvalidInput("detail_level must be 'full' or 'summary'")
     target = agent_id or principal.agent_id
     timeline_limit = max(0, min(timeline_limit, 50))
     event_limit = max(0, min(event_limit, 50))
-    timeline = search_memories(
-        query, max(1, timeline_limit), target, principal, 0, "timeline", category,
-    ) if timeline_limit else []
-    events = search_memories(
-        query, max(1, event_limit), target, principal, 0, "event", category,
-    ) if event_limit else []
+    if detail_level == "full":
+        timeline = search_memories(
+            query, max(1, timeline_limit), target, principal, 0, "timeline", category,
+        ) if timeline_limit else []
+        events = search_memories(
+            query, max(1, event_limit), target, principal, 0, "event", category,
+        ) if event_limit else []
+    else:
+        timeline, events = [], []
+    summary = get_agent_summary(principal, target)
+    categories = list_categories(principal, target)
     return {
         "agent_id": target,
-        "summary": get_agent_summary(principal, target),
+        "model_version": MEMORY_MODEL_VERSION,
+        "detail_level": detail_level,
+        "details_omitted": detail_level == "summary",
+        "priority": "summary",
+        "layers": [dict(item) for item in LAYER_GUIDE if item["layer"] != "legacy"],
+        "summary": summary,
         "timeline": timeline,
         "events": events,
-        "categories": list_categories(principal, target),
+        "categories": categories,
+        "counts": {
+            "timeline_returned": len(timeline),
+            "event_returned": len(events),
+            "categories": len(categories),
+            "summary_chars": len(summary["content"]) if summary else 0,
+        },
+        "reading_order": [dict(item) for item in MEMORY_READING_ORDER[:5]],
+        "next_calls": _context_next_calls(target, [c["category"] for c in categories]),
+        "hint": (
+            "Read 'summary' FIRST — it is this Agent's single, potentially long "
+            "overview of everything it remembers, and tells you what it is working "
+            "on. Only then use next_calls (or memory_search with memory_layer='event' "
+            "or 'timeline') for the detailed records you actually need."
+        ),
     }
 
 
@@ -669,6 +973,9 @@ def search_memories(query: str = "", limit: int = 20, owner_agent_id: str | None
             entries.extend(structured_memory_to_dict(row) for row in structured_rows)
             sort_key = "occurred_at" if memory_layer == "timeline" else "updated_at"
             entries.sort(key=lambda item: item.get(sort_key) or "", reverse=True)
+            # The single summary has the highest read priority: when browsing a
+            # layer-free list, put every Agent's whole-memory overview on top.
+            entries.sort(key=lambda item: 0 if item.get("memory_layer") == "summary" else 1)
             return entries[offset:offset + limit]
 
         lexical = [(f"legacy:{row.id}", memory_to_dict(row)) for row in legacy_rows]
@@ -821,6 +1128,11 @@ def search_memories(query: str = "", limit: int = 20, owner_agent_id: str | None
             for rank, (key, item) in enumerate(candidates, start=1):
                 scores[key] = scores.get(key, 0.0) + 1.0 / (60 + rank)
                 items_by_key[key] = item
+        # A matching summary is the best next thing to read, so give it a small
+        # RRF boost. It must still be a keyword/vector candidate to appear.
+        for key, item in items_by_key.items():
+            if item.get("memory_layer") == "summary":
+                scores[key] += 0.5 / 61
         ordered = sorted(
             items_by_key,
             key=lambda key: (scores[key], items_by_key[key].get("updated_at") or ""),

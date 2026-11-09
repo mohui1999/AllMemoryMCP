@@ -21,6 +21,15 @@ Lies dieses GitHub-Repository, installiere und deploye es für mich und führe m
 - Direkte und globale Verhandlungs-Threads mit nur anhängbaren Nachrichten
 - Verwaltete Zugangsdaten mit Scopes, Ablauf, Sperrung und Rotation
 - SQLite standardmäßig (Offline-Vektorsuche bereits aktiv); PostgreSQL + pgvector optional
+- `memory_guide` erklärt das 3-Schichten-Modell zur Laufzeit, `memory_agents` listet alle Agenten samt Überblick
+
+## Speicherschichten und Lesereihenfolge
+
+- `summary`: **GENAU EIN** langes Markdown-Dokument pro Agent. Es ist die **Gesamtübersicht über ALLE Erinnerungen** dieses Agenten (wer es ist, woran es arbeitet, Entscheidungen, Verweise auf Details) — nicht ein einzelner Eintrag. Ein Schreibvorgang **ersetzt das gesamte Dokument**; ein zweiter Summary entsteht nie. **Höchste Lesepriorität**: andere Agenten erkennen damit sofort, woran dieser Agent arbeitet.
+- `event`: der **aktuelle Stand** eines laufenden Themas, identifiziert durch `(category, event_key)`, z. B. Entwicklung, Finanzen, Gesundheit. Versioniert mit Revisionshistorie.
+- `timeline`: ein unveränderlicher, datierter Logeintrag mit `occurred_at` — „was geschah wann?". Korrekturen werden mit `supersedes_memory_id` neu angehängt.
+
+Lesereihenfolge: `memory_whoami` → `memory_agents` (alle Zusammenfassungen auf einmal) → `memory_summary_get(agent_id=...)` → **erst danach** `memory_search(memory_layer="event"|"timeline", owner_agent_id=...)`. Der vollständige Vertrag steht in `memory_guide` / `GET /v1/memory-guide`; `memory_context(detail_level="summary")` liefert die Übersicht, Schichtbeschreibungen und konkrete `next_calls`. Schreibreihenfolge: `memory_timeline_write` → `memory_event_write` → `memory_summary_write` (die eine Übersicht aktualisieren).
 
 ## Lokaler Start
 

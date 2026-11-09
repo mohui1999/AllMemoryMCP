@@ -51,7 +51,7 @@ Runtime modules stay at the project root because the documented local and contai
 
 ## Project status
 
-**Pre-1.0 / experimental** (API version `0.4.0`, November 2026). The three memory layers, offline vector retrieval, context assembly and reindexing are covered by scripted checks on both SQLite and PostgreSQL + pgvector. A live MCP handshake over Streamable HTTP has also been exercised, and the admin console sign-in plus credential lifecycle were checked in headless Chrome against a local service. Remote embedding providers, backup restore and concurrency testing remain unverified. Please read this before deploying to production.
+**Pre-1.0 / experimental** (API version `0.5.0`, November 2026). The three memory layers, offline vector retrieval, context assembly and reindexing are covered by scripted checks on both SQLite and PostgreSQL + pgvector. A live MCP handshake over Streamable HTTP has also been exercised, and the admin console sign-in plus credential lifecycle were checked in headless Chrome against a local service. Remote embedding providers, backup restore and concurrency testing remain unverified. Please read this before deploying to production.
 
 | Verified by execution (2026-11-09) | Not yet exercised |
 |---|---|
@@ -61,6 +61,7 @@ Runtime modules stay at the project root because the documented local and contai
 | Offline vector retrieval on SQLite: sparse chunk vectors, RRF fusion, version-aware filtering, reindex | Backup restore, concurrency / load testing |
 | PostgreSQL 16 + pgvector: Alembic `0001 → 0004`, the `vector` extension, HNSW cosine indexes, `Index Scan` on `<=>` ordering, `vector(1536)` chunk vectors, reindex | |
 | `memory_context`, categories, REST 401/403/404/409/422, two-tenant isolation, MCP `initialize` over Streamable HTTP; Alembic on SQLite, `compileall`, `node --check` | |
+| `0.5.0`: `memory_guide`, `memory_agents` / `/v1/agents`, summary-first ordering, one-summary auto-version replacement, `detail_level` context, scripted checks on SQLite | |
 
 There is currently **no automated test suite committed to the repository** — the checks above were run as local scripts. Adding `pytest` coverage is one of the most valuable contributions (see [Roadmap](#roadmap-and-known-limitations)).
 
@@ -70,6 +71,7 @@ The source is published at [github.com/mohui1999/AllMemoryMCP](https://github.co
 
 - [Features](#features)
 - [Memory layers](#memory-layers)
+- [Agent reading protocol](#agent-reading-protocol)
 - [How it works](#how-it-works)
 - [When not to use it](#when-not-to-use-it)
 - [Quick start (local)](#quick-start-local)
@@ -92,9 +94,10 @@ The source is published at [github.com/mohui1999/AllMemoryMCP](https://github.co
 - **Two agent interfaces:** REST API and remote MCP over Streamable HTTP, plus a local stdio bridge for clients that launch MCP servers as subprocesses.
 - **Tenant isolation enforced in SQL**, not just in application checks — every read and write carries a `tenant_id` condition.
 - **Provenance and ownership:** every result includes `owner_agent_id`; only the uploader can update or soft-delete a memory; all writes produce audit records.
-- **Three memory layers:** one Markdown summary per agent, append-only dated timeline memories, and versioned event memories for continuing areas such as `development`, `finance` or `health`.
+- **Three memory layers with an explicit contract:** one long, whole-memory Markdown summary per agent, append-only dated timeline memories, and versioned event memories for continuing areas such as `development`, `finance` or `health`. Agents can fetch the contract at runtime with `memory_guide`.
+- **Summary-first reading:** `memory_agents` lists every agent together with its single overview, so another agent knows what it is doing before pulling detailed event/timeline rows. Summaries also rank first in layer-free listing and receive a small boost in hybrid search.
 - **Vector retrieval by default:** every memory is split into paragraph-aware chunks and embedded. The default SQLite deployment uses offline, zero-dependency vectors plus keyword/RRF hybrid ranking; PostgreSQL can use pgvector/HNSW with a remote embedding model.
-- **One-call context loading:** `memory_context` returns an Agent's Markdown summary, recent timeline events, matching event memories and the categories in use.
+- **One-call context loading:** `memory_context` returns an Agent's Markdown summary, categories, counts and ready-to-use follow-up calls; `detail_level=summary` keeps the first read small, while `detail_level=full` also returns timeline and event rows.
 - **Append-only negotiation:** `direct` threads (creator + named recipients) and tenant-wide `global` threads, with creator-controlled `resolved` / `closed` status.
 - **Managed credentials:** issue tokens at runtime with `read` / `write` scopes, optional expiry, revocation and rotation. Only SHA-256 hashes are stored; raw tokens appear once.
 - **Browser viewer:** memory search, source-agent and type filters, pagination, detail panel with copyable IDs, negotiation timelines, stat overview, light/dark themes and a responsive layout; login requires a managed read-only credential.
@@ -106,17 +109,41 @@ The source is published at [github.com/mohui1999/AllMemoryMCP](https://github.co
 
 Each Agent writes within its own identity and tenant. Other Agents in that tenant can read the memory and see `owner_agent_id`; only the uploader can change or soft-delete it.
 
-| Layer | Purpose | Update behavior |
+| Layer | What it actually means | How many | Update behavior |
+|---|---|---|---|
+| `summary` | **One overview of ALL of that Agent's memories.** A long Markdown digest: who it is, what it is working on, key decisions, conventions, current state and pointers to details. It is *not* a single memory entry — it is the whole picture, and the first thing another Agent should read. | **Exactly ONE active row per `(tenant_id, agent_id)`**, enforced by a partial unique index | Writing **replaces the entire document** and keeps a revision snapshot. Up to 100 000 characters. `expected_version` is optional for a single writer. |
+| `timeline` | **Time memory.** An append-only, dated log entry answering "what happened, and when" (`occurred_at` must be timezone-qualified ISO 8601; optional `category`). | Many rows per Agent | Immutable; a correction appends a new row with `supersedes_memory_id`. |
+| `event` | **Event memory.** The CURRENT STATE of one long-running subject, keyed by `(category, event_key)` — for example `(development, AllMemoryMCP)`, `(finance, long-term allocation)`, `(health, allergy treatment)`. A living document, not a log entry. | One active row per `(tenant_id, agent_id, category, event_key)` | Versioned upsert; revisions are kept; pass `expected_version` when writers may race. |
+| `legacy` | Older free-form records created through `memory_write`. | Many rows per Agent | Normal versioned updates; kept for compatibility. |
+
+The summary is deliberately allowed to be long: it is the digest an Agent maintains so that *other* Agents can understand its work in one read. **Do not create a second summary to add information — replace the existing one.** Other Agents can read it but never replace or delete it.
+
+`GET /v1/memory-guide` (or the `memory_guide` MCP tool) returns this contract in machine-readable form — layer meanings (English and Chinese), cardinality, length limits, read/write tools, reading order and rules — so an Agent never has to guess what `summary`, `timeline` or `event` mean. `GET /v1/whoami`, `memory_whoami`, `memory_context` and `memory_search` also carry a compact layer reminder in their responses.
+
+Event memories are grouped by a free-form `category` and a stable `event_key`. Conventional categories are `development`, `finance` and `health` (开发 / 理财 / 健康), but any string is accepted. `GET /v1/categories` (or `memory_categories`) lists the categories in use.
+
+Every layer is chunked and embedded on write. Retrieval combines keyword candidates with cosine-similar chunks and merges the two rankings (RRF), while filtering tenant, layer, category, event key, time range and memory version **before** ranking. Summaries are placed first when listing without a query and receive a small relevance boost in hybrid search. Vectors are tied to a memory version, so an update never surfaces stale chunks. If a provider fails, chunks are marked `failed` and keyword search still works; `POST /v1/admin/reindex` rebuilds missing or failed vectors without modifying canonical text.
+
+## Agent reading protocol
+
+The layers are a **progressive disclosure ladder**, not three equal buckets. A newly connected Agent should:
+
+1. **`memory_whoami`** — confirm which identity this connection uses. The response also carries a compact reminder of the three layers.
+2. **`memory_agents`** / `GET /v1/agents` — read **every** Agent's single summary plus its timeline/event counts in one call. This answers "who is doing what?" without pulling thousands of detail rows. Use `summary_mode=preview` for large tenants.
+3. **`memory_summary_get(agent_id=...)`** / `GET /v1/memory-summaries/{agent_id}` — read the full, potentially long overview of the Agent you care about. **This is the highest-priority source.**
+4. **Only then fetch details** — `memory_search(memory_layer="event", category=..., owner_agent_id=...)` for a subject's current state, `memory_search(memory_layer="timeline", occurred_from=..., occurred_to=...)` for dated history, or `memory_revisions(memory_id=...)` for how an overview/subject changed.
+
+`memory_context(detail_level="summary")` / `GET /v1/memory-context?detail_level=summary` bundles step 3 with layer descriptions, counts, `reading_order` and concrete `next_calls`, so a client can copy the next request instead of inventing it. `detail_level="full"` (the default, backward compatible) also returns recent timeline and matching event rows.
+
+Writing is the reverse order: append dated facts with `memory_timeline_write`, keep subject state current with `memory_event_write`, then refresh the **one** summary with `memory_summary_write` so the global overview stays accurate.
+
+| What you need | Read first | Then call |
 |---|---|---|
-| `summary` | The Agent's current Markdown overview of its retained knowledge | One active summary per Agent; updates use `expected_version` and keep revision snapshots |
-| `timeline` | A dated event or observation | Append-only; corrections create a new event with `supersedes_memory_id` |
-| `event` | Continuously updated event knowledge within a category, such as an ongoing development or health matter | One active item per Agent/category/key; updates use `expected_version` and keep revision snapshots |
-
-Legacy records created through `memory_write` remain searchable as the `legacy` layer. `memory_search` searches all layers by default. Timeline filters accept timezone-qualified ISO 8601 values.
-
-Event memories are grouped by a free-form `category` and a stable `event_key`. Conventional categories are `development`, `finance` and `health` (开发 / 理财 / 健康), but any string is accepted. `GET /v1/categories` (or the `memory_categories` MCP tool) lists the categories in use, and `GET /v1/memory-context` (or `memory_context`) returns an Agent's summary, recent timeline, matching event memories and categories in one call — the recommended first call of an Agent session.
-
-Every layer is chunked and embedded on write. Retrieval combines keyword candidates with cosine-similar chunks and merges the two rankings (RRF), while filtering tenant, layer, category, event key, time range and memory version **before** ranking. Vectors are tied to a memory version, so an update never surfaces stale chunks. If a provider fails, chunks are marked `failed` and keyword search still works; `POST /v1/admin/reindex` rebuilds missing or failed vectors without modifying canonical text.
+| Understand another Agent / the team | `memory_agents` | `memory_summary_get(agent_id=...)` |
+| The current state of one project or topic | that Agent's summary | `memory_search(memory_layer="event", category=..., event_key=...)` |
+| What happened during a period | that Agent's summary | `memory_search(memory_layer="timeline", occurred_from=..., occurred_to=...)` |
+| How an overview changed | that Agent's summary | `memory_revisions(memory_id=...)` |
+| Unsure which layer to use | `memory_guide` | follow `reading_order` / `writing_order` |
 
 ## How it works
 
@@ -267,14 +294,39 @@ After connecting, call `memory_whoami` (or `GET /v1/whoami`) in each Agent and c
 After connecting, give the agent this operational guidance:
 
 ```text
-Use AllMemoryMCP for shared memory.
-- First call memory_whoami and remember your own agent_id; it comes from your token.
-- Search with memory_search before creating a duplicate.
+Use AllMemoryMCP for shared memory. Call memory_guide if you are unsure about a layer.
+
+MEMORY MODEL (three layers):
+- summary = EXACTLY ONE long Markdown document per Agent. It is the overview of
+  ALL of that Agent's memories (what it is, what it is working on, decisions,
+  conventions, pointers to details), NOT one memory entry. It may be long.
+  Read it FIRST to understand another Agent. Writing REPLACES the whole document
+  and never creates a second summary; only the owning Agent may write it.
+- event = the CURRENT STATE of one long-running subject, keyed by
+  (category, event_key), e.g. (development, my-project), (finance, allocation),
+  (health, treatment). A living, versioned document for detailed context.
+- timeline = an append-only dated log entry with occurred_at, answering what
+  happened and when. Immutable; corrections append a row that supersedes the old one.
+
+READ in this order (progressive disclosure):
+1. memory_whoami                       - confirm your own identity.
+2. memory_agents                       - see EVERY Agent's one summary at once.
+3. memory_summary_get(agent_id=...)    - the full overview of the Agent you need.
+4. ONLY THEN memory_search(memory_layer="event"|"timeline", owner_agent_id=...)
+   for the details. memory_context(detail_level="summary") bundles step 3 with
+   layer descriptions and ready-to-use next_calls.
+
+WRITE in this order:
+1. memory_timeline_write   - append dated facts as they happen.
+2. memory_event_write      - keep each subject's current state up to date.
+3. memory_summary_write    - refresh your ONE overview of everything.
+   expected_version is optional for a single writer.
+
 - Every memory result includes owner_agent_id; preserve that source when summarizing.
-- Use memory_write to add a memory. You may update or delete only memories you uploaded.
-- Use negotiation_start with channel="direct" and recipients=[...] for a private discussion, or channel="global" for a tenant-wide discussion.
-- Use negotiation_post to append replies. Negotiation messages do not change memories automatically.
-- Use negotiation_resolve only when the thread creator has reached a conclusion; update a memory separately if needed.
+- You may update or delete only memories you uploaded. memory_write creates a
+  legacy free-form record; prefer the three layers above.
+- Use negotiation_start / negotiation_post / negotiation_resolve for discussions;
+  messages never change memories automatically. Update a memory separately.
 - Never claim a write succeeded until the tool confirms it.
 ```
 
@@ -328,15 +380,17 @@ Route summary (all `/v1/*` routes require a Bearer token):
 | `GET` | `/health` | Service health (unauthenticated) |
 | `GET`, `POST` | `/v1/memories` | Search/list and create memories |
 | `GET`, `PATCH`, `DELETE` | `/v1/memories/{memory_id}` | Read, update, or soft-delete a memory |
-| `GET`, `PUT` | `/v1/memory-summary` | Read or version-update the caller's Markdown summary |
+| `GET`, `PUT` | `/v1/memory-summary` | Read or REPLACE the caller's ONE long Markdown summary |
 | `GET` | `/v1/memory-summaries/{agent_id}` | Read another Agent's summary in the same tenant |
 | `GET`, `POST` | `/v1/timeline-memories` | Search or append dated events |
 | `GET`, `PUT` | `/v1/event-memories` | Search or upsert a versioned category/event memory |
 | `PATCH` | `/v1/event-memories/{memory_id}` | Update an owned event memory with `expected_version` |
 | `GET` | `/v1/memories/{memory_id}/revisions` | Read summary/event revision snapshots |
-| `GET` | `/v1/whoami` | Return the identity (tenant, Agent id, scopes) behind this token |
+| `GET` | `/v1/whoami` | Return the identity (tenant, Agent id, scopes) behind this token, with a layer reminder |
+| `GET` | `/v1/memory-guide` | The machine-readable three-layer contract (meanings, cardinality, reading/writing order) |
+| `GET` | `/v1/agents` | Directory of all Agents in this tenant WITH each one's single summary |
 | `GET` | `/v1/categories` | List categories in use, with event/timeline counts |
-| `GET` | `/v1/memory-context` | Load an Agent's summary, timeline, event memories and categories at once |
+| `GET` | `/v1/memory-context` | Load an Agent's summary first; `detail_level=summary` omits detail rows and returns `next_calls` |
 | `GET`, `POST` | `/v1/negotiations` | List visible threads or start a thread |
 | `GET` | `/v1/negotiations/{thread_id}` | Read a thread and its messages |
 | `POST` | `/v1/negotiations/{thread_id}/messages` | Append a message |
@@ -352,11 +406,11 @@ Route summary (all `/v1/*` routes require a Bearer token):
 Structured-memory examples:
 
 ```sh
-# Create/update your summary. Omit expected_version when creating; use the
-# returned version when updating, to avoid overwriting another recent update.
+# Create or REPLACE your ONE summary (the long overview of ALL your memories).
+# expected_version is optional for a single writer; pass it when writers may race.
 curl -X PUT http://127.0.0.1:8099/v1/memory-summary \
   -H 'Authorization: Bearer <agent-token>' -H 'Content-Type: application/json' \
-  -d '{"markdown":"# Current context: Working on the memory service.","expected_version":0}'
+  -d '{"markdown":"# Who I am\nMemory-service agent.\n\n## Current work\nStructured memory layers.\n\n## Details\nSee event/timeline rows in category development."}'
 
 curl -X POST http://127.0.0.1:8099/v1/timeline-memories \
   -H 'Authorization: Bearer <agent-token>' -H 'Content-Type: application/json' \
@@ -367,11 +421,19 @@ curl -X PUT http://127.0.0.1:8099/v1/event-memories \
   -d '{"category":"development","event_key":"memory-storage","title":"Memory storage design","content_markdown":"## Current approach: Use versioned event memory and vector chunks."}'
 ```
 
-Updates based on a stale `expected_version` return `409`; read the latest memory and merge before retrying.
+Updates based on a stale `expected_version` return `409`; read the latest memory and merge before retrying. Omitting it lets the service detect the current version automatically.
 
-Load the whole picture in one call (recommended when an Agent starts), inspect categories, and rebuild vectors after enabling or changing an embedding provider:
+Read the layer contract, see what every Agent is doing, then load one Agent's overview first and follow the returned `next_calls` for details:
 
 ```sh
+curl http://127.0.0.1:8099/v1/memory-guide -H 'Authorization: Bearer <agent-token>'
+
+curl 'http://127.0.0.1:8099/v1/agents?summary_mode=full' \
+  -H 'Authorization: Bearer <agent-token>'
+
+curl 'http://127.0.0.1:8099/v1/memory-context?detail_level=summary' \
+  -H 'Authorization: Bearer <agent-token>'
+
 curl 'http://127.0.0.1:8099/v1/memory-context?category=finance' \
   -H 'Authorization: Bearer <agent-token>'
 
@@ -388,14 +450,16 @@ curl -X POST 'http://127.0.0.1:8099/v1/admin/reindex?batch_size=200' \
 |---|---|
 | `memory_search` | Search tenant-visible memories and return uploader metadata |
 | `memory_get` | Read a memory by ID |
-| `memory_whoami` | Confirm which `agent_id` / tenant / scopes this connection uses |
-| `memory_write` | Create a memory owned by the calling agent |
+| `memory_whoami` | Confirm which `agent_id` / tenant / scopes this connection uses; includes a layer reminder |
+| `memory_guide` | Full three-layer contract: what summary / event / timeline mean and how to read them |
+| `memory_agents` | List every Agent WITH its one summary — the cross-agent first read |
+| `memory_write` | Create a memory owned by the calling agent (legacy layer) |
 | `memory_update` | Update only the calling agent's memory |
 | `memory_delete` | Soft-delete only the calling agent's memory |
-| `memory_summary_get` / `memory_summary_write` | Read summaries or create/version-update the caller's summary |
-| `memory_timeline_write` | Append a dated event or superseding correction |
-| `memory_event_write` | Create/version-update a categorized event memory (`development`, `finance`, `health`, ...) |
-| `memory_context` | Load an Agent's summary, timeline, event memories and categories in one call |
+| `memory_summary_get` / `memory_summary_write` | Read the ONE whole-memory overview, or REPLACE your own (never creates a second one) |
+| `memory_timeline_write` | Append a dated TIME-memory row or a superseding correction |
+| `memory_event_write` | Create/version-update an EVENT memory: the current state of one `(category, event_key)` subject |
+| `memory_context` | Load an Agent's summary first; `detail_level=summary|full`, plus `layers`, `reading_order` and `next_calls` |
 | `memory_categories` | List the categories currently in use |
 | `memory_revisions` | Read visible summary/event revision snapshots |
 | `negotiation_start` | Start a direct or global discussion |

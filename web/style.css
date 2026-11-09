@@ -440,6 +440,11 @@ h1 { font-size: clamp(30px, 3.3vw, 42px); line-height: 1.18; letter-spacing: -1.
 .about-card p { color: var(--muted); font-size: 12.5px; line-height: 1.8; margin: 0; }
 .about-card code, .about-foot code { font-size: 11px; color: var(--accent); background: var(--accent-soft); padding: 1px 5px; border-radius: 5px; }
 .about-foot { display: flex; align-items: flex-start; gap: 12px; margin-top: 16px; padding: 16px 20px; border-radius: var(--radius); border: 1px solid color-mix(in srgb, var(--teal) 22%, transparent); background: var(--teal-soft); color: var(--ink-2); font-size: 12.5px; line-height: 1.7; }
+.about-layers { margin-top: 15px; }
+.about-layers p + p { margin-top: 12px; }
+.about-layers ol { margin: 12px 0; padding-left: 20px; color: var(--muted); font-size: 12.5px; line-height: 1.85; }
+.about-layers li + li { margin-top: 6px; }
+.about-layers strong { color: var(--ink); }
 .about-foot .icon { width: 18px; height: 18px; color: var(--teal); margin-top: 2px; }
 .about-links { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 22px; }
 .about-links-label { font-size: 10px; font-weight: 700; letter-spacing: 1.3px; color: var(--faint); text-transform: uppercase; margin-right: 5px; }

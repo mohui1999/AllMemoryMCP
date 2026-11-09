@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#f6f7fb">
   <meta name="description" content="A read-only browser for the shared, tenant-isolated memory of your AI agents.">
   <title>AllMemory — Shared agent memory</title>
-  <link rel="stylesheet" href="assets/style.css?v=0.4.1">
+  <link rel="stylesheet" href="assets/style.css?v=0.5.0">
   <script>
     (function () {
       try {
@@ -150,7 +150,7 @@
       <div class="side-row"><span>Access</span><strong class="accent-teal" id="side-access">read only</strong></div>
     </div>
 
-    <div class="side-foot" id="side-foot"><span class="pulse-dot"></span> v0.4.0 · read-only viewer</div>
+    <div class="side-foot" id="side-foot"><span class="pulse-dot"></span> v0.5.0 · read-only viewer</div>
   </aside>
 
   <div class="app-main">
@@ -248,8 +248,19 @@
         <article class="about-card"><span class="about-icon amber"><svg class="icon"><use href="#i-plug"></use></svg></span><h3>Two interfaces</h3><p>Agents use the REST API or the MCP server (Streamable HTTP and stdio). This browser is a third, human-facing window onto the same database.</p></article>
         <article class="about-card"><span class="about-icon rose"><svg class="icon"><use href="#i-database"></use></svg></span><h3>Portable storage</h3><p>SQLite is the default for a single host. Point <code>DATABASE_URL</code> at PostgreSQL to enable Alembic migrations and optional pgvector semantic search.</p></article>
       </div>
+      <article class="about-card about-layers">
+        <span class="about-icon violet"><svg class="icon"><use href="#i-layers"></use></svg></span>
+        <h3>Three memory layers · read the summary first</h3>
+        <p>Every Agent keeps exactly ONE <code>summary</code>: a long Markdown overview of ALL its memories. Other Agents read it first to understand what that Agent is doing, then fetch details only as needed.</p>
+        <ol>
+          <li><strong>summary</strong> — the one, potentially long, whole-memory overview per Agent. Writing replaces it and never creates a second one. Highest read priority.</li>
+          <li><strong>event</strong> — the current state of a long-running subject keyed by <code>(category, event_key)</code>, e.g. development / finance / health. Versioned.</li>
+          <li><strong>timeline</strong> — an append-only dated log entry with <code>occurred_at</code>, answering what happened and when.</li>
+        </ol>
+        <p>Agents can call <code>memory_guide</code> for the full contract, <code>memory_agents</code> for everyone's summary at once, and <code>memory_context(detail_level="summary")</code> for the overview plus ready-to-use follow-up calls.</p>
+      </article>
       <div class="about-foot"><svg class="icon"><use href="#i-spark"></use></svg><span>Memories keep their source agent, version and timestamps. Threads are scoped conversations; resolving a thread never rewrites a memory.</span></div>
-      <div class="about-links"><span class="about-links-label">Interfaces</span><code>GET /v1/memories</code><code>GET /v1/negotiations</code><code>/health</code><code>MCP · memory_* / negotiation_*</code></div>
+      <div class="about-links"><span class="about-links-label">Interfaces</span><code>GET /v1/memory-guide</code><code>GET /v1/agents</code><code>GET /v1/memories</code><code>GET /v1/negotiations</code><code>/health</code><code>MCP · memory_* / negotiation_*</code></div>
     </section>
 
     <!-- Administration -->
@@ -324,6 +335,6 @@
 </div>
 
 <div id="toast-stack" class="toast-stack" aria-live="polite"></div>
-<script src="assets/app.js?v=0.4.1" defer></script>
+<script src="assets/app.js?v=0.5.0" defer></script>
 </body>
 </html>
