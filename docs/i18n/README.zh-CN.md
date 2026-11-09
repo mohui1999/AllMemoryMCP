@@ -509,7 +509,9 @@ uvicorn app:app --host 127.0.0.1 --port 8099
 |---|---|
 | `401 Provide a valid Agent bearer token` | token 缺失、已撤销、已过期，或不在 `AGENT_TOKENS` / 托管凭证里。 |
 | `403 requires scope 'write'` | 凭证是只读的（查看者凭证常见）；Agent 需签发 read/write 凭证。 |
-| 网页登录返回 401 | 用户名必须与 `agent_id` 完全一致，凭证必须是数据库签发且只有 `read`；静态 token 会被拒绝。 |
+| 网页登录返回 401 | 查看者登录要求用户名与 `agent_id` 完全一致、凭证为数据库签发且只有 `read`；`ADMIN_TOKENS` 里的 admin token 则用于登录管理后台。 |
+| 看不到管理后台 | 当前是用只读凭证登录的；退出后改用 admin token。管理员角色下记忆视图会被有意隐藏。 |
+| 部署后网页仍是旧界面 | CDN 缓存了 `app.js` / `style.css`；更新 `web/index.html` 里的 `?v=` 后缀，或给网页响应加 `Cache-Control: no-store`。 |
 | 更新 / 删除返回 404 | 记忆属于别的 Agent 或别的租户；系统有意不暴露存在性。 |
 | MCP 客户端连不上 | 确认客户端会发送 `Authorization`；检查反代是否透传该请求头、SSE 是否关闭缓冲（nginx 用 `proxy_buffering off`）。 |
 | REST 与 MCP 看到的数据不一致 | 两个进程的 `DATABASE_URL` / `DATABASE_PATH` 不同。 |

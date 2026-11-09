@@ -527,7 +527,9 @@ Remote MCP clients must be able to set an `Authorization` header until an OAuth-
 |---|---|
 | `401 Provide a valid Agent bearer token` | Token missing, revoked, expired, or not present in `AGENT_TOKENS` / managed credentials. |
 | `403 requires scope 'write'` | The credential is `read`-only (typical for viewer credentials). Issue a read/write credential for agents. |
-| Viewer login returns 401 | The username must exactly match `agent_id`, the credential must be DB-managed and `read`-only, and static tokens are rejected. |
+| Viewer login returns 401 | For viewer access the username must exactly match `agent_id`, the credential must be DB-managed and `read`-only. An `ADMIN_TOKENS` entry signs in as an administrator instead. |
+| Administration workspace is missing | The page was signed in with a read-only credential. Sign out and use an admin token; memory views are intentionally hidden for admins. |
+| Browser still shows the old UI after deploying | A CDN cached `app.js` / `style.css`. Bump the `?v=` suffix in `web/index.html`, or serve the viewer with `Cache-Control: no-store`. |
 | `404` on update/delete | The memory belongs to another agent or another tenant; ownership is intentionally not disclosed. |
 | MCP client cannot connect | Confirm the client sends `Authorization`; check the reverse proxy preserves the header and keeps SSE unbuffered (`proxy_buffering off` in nginx). |
 | REST and MCP see different data | The two processes are using different `DATABASE_URL` / `DATABASE_PATH` values. |
