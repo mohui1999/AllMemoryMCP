@@ -16,6 +16,7 @@ __pycache__/
 # Local design and development notes (README remains trackable)
 /docs/ARCHITECTURE.md
 /docs/DEV-DOC.md
+/docs/TEAM-MEMORY-DESIGN.md
 
 # Runtime databases and backups
 data/
