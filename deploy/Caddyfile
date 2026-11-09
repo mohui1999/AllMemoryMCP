@@ -1,0 +1,19 @@
+# AllMemoryMCP with Caddy — zero-config automatic HTTPS.
+# Run Caddy on the host (or as a separate container) and point DNS at this box.
+# Caddy obtains/renews the cert for you; no certbot step needed.
+
+allmemory.example.com {
+    # MCP Streamable HTTP first (path match), then the REST API.
+    handle /mcp* {
+        reverse_proxy 127.0.0.1:8001
+    }
+
+    handle_path /api/* {
+        reverse_proxy 127.0.0.1:8099
+    }
+
+    # The web viewer is served at /; its relative assets and API calls stay on this host.
+    handle {
+        reverse_proxy 127.0.0.1:8099
+    }
+}

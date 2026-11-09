@@ -1,0 +1,14 @@
+fastapi>=0.115,<1
+uvicorn[standard]>=0.30,<1
+mcp>=1.12,<2
+pydantic>=2.8,<3
+python-dotenv>=1.0,<2
+# Storage abstraction (SQLite dev / PostgreSQL prod)
+sqlalchemy>=2.0,<3
+# PostgreSQL driver (only required when DATABASE_URL points at Postgres)
+psycopg[binary]>=3.1,<4
+# pgvector Python client (only required for PostgreSQL vector/semantic search)
+pgvector>=0.2,<1
+# Schema migrations for PostgreSQL
+alembic>=1.13,<2
+# openai>=1.0,<2   # OPTIONAL: only if EMBEDDING_PROVIDER=openai is enabled

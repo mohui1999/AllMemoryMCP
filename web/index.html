@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f7f8fb">
+  <title>Shared Memory · AllMemory</title>
+  <link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+  <main class="shell">
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="AllMemory home">
+        <span class="brand-mark">M</span>
+        <span>AllMemory<span class="brand-light"> / Memory</span></span>
+      </a>
+      <div id="user-area" class="user-area" hidden>
+        <span class="user-dot"></span><span id="current-user"></span>
+        <button id="logout-button" class="quiet-button" type="button">Sign out</button>
+      </div>
+    </header>
+
+    <section id="login-view" class="login-wrap">
+      <div class="login-card">
+        <div class="eyebrow"><span class="eyebrow-dot"></span> PERSONAL MEMORY SPACE</div>
+        <h1>Explore your shared memory</h1>
+        <p class="lead">Your agent provides a username and a read-only credential. Sign in to search memories and see which agent contributed each one.</p>
+        <form id="login-form" class="login-form">
+          <label for="username">Username</label>
+          <input id="username" name="username" autocomplete="username" placeholder="e.g. viewer-alice" required>
+          <label for="credential">Read-only credential</label>
+          <input id="credential" name="credential" type="password" autocomplete="current-password" placeholder="Paste the credential from your agent" required>
+          <button class="primary-button" type="submit">Sign in <span aria-hidden="true">→</span></button>
+          <p id="login-error" class="form-error" role="alert" hidden></p>
+        </form>
+        <div class="privacy-note"><span aria-hidden="true">◈</span><span>This is a read-only view. The credential is kept in memory only and is cleared when you sign out or close the page.</span></div>
+      </div>
+      <div class="login-aside"><div class="orbit orbit-one"></div><div class="orbit orbit-two"></div><div class="aside-core">M</div><span class="aside-label">Long-term memory<br>shared by your agents</span></div>
+    </section>
+
+    <section id="memory-view" class="memory-view" hidden>
+      <div class="page-heading">
+        <div><div class="eyebrow"><span class="eyebrow-dot"></span> SHARED KNOWLEDGE</div><h1>Memory browser</h1><p class="lead">Browse memories saved by agents in this space, with their source shown alongside the content.</p></div>
+        <div class="readonly-pill"><span></span> Read-only</div>
+      </div>
+
+      <form id="search-form" class="search-bar">
+        <label class="search-input-wrap" for="query"><span class="search-icon" aria-hidden="true">⌕</span><input id="query" name="q" placeholder="Search content, type or tags" autocomplete="off"></label>
+        <input id="source-filter" class="source-input" placeholder="Source agent (optional)" aria-label="Source agent">
+        <button class="primary-button search-button" type="submit">Search</button>
+      </form>
+
+      <div class="results-heading"><div><strong id="result-label">Recent memories</strong><span id="result-count" class="muted"></span></div><span class="sort-label">Sorted by last update</span></div>
+      <div class="content-grid">
+        <div class="results-column">
+          <div id="memory-list" class="memory-list" aria-live="polite"></div>
+          <div id="empty-state" class="empty-state" hidden><div class="empty-icon">⌕</div><strong>No memories found</strong><p>Try a shorter keyword or clear the source filter.</p></div>
+          <div id="loading-state" class="loading-state" hidden>Loading memories…</div>
+          <div class="pagination"><button id="previous-button" class="page-button" type="button">← Previous</button><span id="page-label">Page 1</span><button id="next-button" class="page-button" type="button">Next →</button></div>
+        </div>
+        <aside id="detail-panel" class="detail-panel">
+          <div class="detail-placeholder"><span class="placeholder-mark">✳</span><strong>Select a memory</strong><p>The full content and its source will appear here.</p></div>
+        </aside>
+      </div>
+      <p id="load-error" class="form-error" role="alert" hidden></p>
+    </section>
+    <footer>AllMemory <span>·</span> Shared agent memory</footer>
+  </main>
+  <script src="assets/app.js" defer></script>
+</body>
+</html>

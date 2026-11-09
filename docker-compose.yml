@@ -1,0 +1,55 @@
+# AllMemoryMCP production compose.
+# Defaults to SQLite (single file on a bind mount) so backups are trivial.
+# To switch to PostgreSQL, uncomment the `postgres` service and set
+# DATABASE_URL=postgresql+psycopg://allmemory:CHANGE_ME@postgres:5432/allmemory
+# in your .env (see .env.production.example).
+#
+# Ports are published on 127.0.0.1 only — the reverse proxy (nginx/Caddy) on the
+# host is the only thing that should reach them. Do NOT publish to 0.0.0.0.
+
+services:
+  app:
+    build: .
+    container_name: allmemorymcp
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      DATABASE_PATH: /data/memory.db
+      DATABASE_URL: ${DATABASE_URL:-sqlite:////data/memory.db}
+      MCP_HOST: 0.0.0.0
+      MCP_PORT: "8001"
+      MCP_TRANSPORT: streamable-http
+    volumes:
+      - ./data:/data
+    ports:
+      - "127.0.0.1:8099:8099"
+      - "127.0.0.1:8001:8001"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8099/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # --- Optional PostgreSQL (pgvector) backend -------------------------------
+  # postgres:
+  #   image: pgvector/pgvector:pg16
+  #   container_name: allmemorymcp-pg
+  #   restart: unless-stopped
+  #   environment:
+  #     POSTGRES_USER: allmemory
+  #     POSTGRES_PASSWORD: CHANGE_ME
+  #     POSTGRES_DB: allmemory
+  #   volumes:
+  #     - allmemory_pg:/var/lib/postgresql/data
+  #   ports:
+  #     - "127.0.0.1:5432:5432"
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "pg_isready -U allmemory"]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 5
+
+volumes:
+  allmemory_pg:

@@ -1,0 +1,42 @@
+# Python virtual environments and bytecode
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+
+# Local secrets (keep checked-in examples)
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# Generated assistant working notes
+.ai-memory/
+
+# Local design and development notes (README remains trackable)
+/docs/ARCHITECTURE.md
+/docs/DEV-DOC.md
+
+# Runtime databases and backups
+data/
+backups/
+*.db
+*.sqlite
+*.sqlite3
+*.db-wal
+*.db-shm
+
+# Test, lint, and packaging artifacts
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+build/
+dist/
+*.egg-info/
+
+# Logs and OS metadata
+*.log
+.DS_Store
+Thumbs.db
