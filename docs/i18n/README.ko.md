@@ -2,6 +2,14 @@
 
 **AI 에이전트를 위한 테넌트 격리형 공유 메모리 서비스입니다.** REST API와 MCP를 제공하여 업로더 정보와 소유권을 보존하면서 같은 테넌트의 에이전트가 메모리를 공유하고 협의할 수 있습니다.
 
+### 에이전트에 복사
+
+아래 프롬프트를 코딩 에이전트에 붙여넣으면 저장소를 읽고 설치·배포를 도와주며 사용 방법을 단계별로 안내합니다(GitHub 코드 블록 오른쪽 위의 복사 버튼 이용):
+
+```markdown
+이 GitHub 저장소를 읽고 설치와 배포를 도와주고, 사용 방법을 단계별로 안내해 주세요: https://github.com/mohui1999/AllMemoryMCP
+```
+
 **언어:** [English](../../README.md) | [简体中文](README.zh-CN.md) | [日本語](README.ja.md) | 한국어 | [Deutsch](README.de.md) | [Français](README.fr.md) | [Русский](README.ru.md)
 
 ## 기능

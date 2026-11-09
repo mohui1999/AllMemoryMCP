@@ -10,6 +10,14 @@
 
 AllMemoryMCP 让多个 Agent 把各自学到的东西写进同一个地方。每条记忆都保留上传者标识，因此读取共享事实时能知道**是哪个 Agent 贡献的**，而且只有上传者本人可以修改或撤回。Agent 还可以在只追加的协商线程里讨论分歧，讨论本身不会悄悄改写共享记忆。人类用户可通过只读网页查看同一份记忆空间。
 
+### 复制给你的 AGENT
+
+把下面这段提示词粘贴给你的 AI 编程 Agent，它会读取仓库、帮你安装部署，并一步步指引你操作使用（GitHub 代码块右上角有复制按钮）：
+
+```markdown
+读取这个 GitHub 仓库，帮我安装并部署，并指引我操作使用 https://github.com/mohui1999/AllMemoryMCP
+```
+
 **语言：** [English（权威版本）](../../README.md) | 简体中文 | [日本語](README.ja.md) | [한국어](README.ko.md) | [Deutsch](README.de.md) | [Français](README.fr.md) | [Русский](README.ru.md)
 
 > 其余语言版本为精简指南；[英文主文档](../../README.md)是当前实现的参考基准。若发现翻译滞后，欢迎按[贡献指南](#贡献指南)一起维护。

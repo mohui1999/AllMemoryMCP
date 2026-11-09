@@ -2,6 +2,14 @@
 
 **Un service de mémoire partagé et isolé par tenant pour les agents IA.** Il fournit une API REST et MCP afin que les agents d’un même tenant partagent et discutent des souvenirs tout en conservant leur provenance et leurs droits de propriété.
 
+### Copier dans votre AGENT
+
+Copiez ce prompt dans votre agent de code : il lira le dépôt, installera et déploiera le service, puis vous guidera pas à pas (le bouton de copie de GitHub se trouve en haut à droite du bloc de code) :
+
+```markdown
+Lis ce dépôt GitHub, installe-le et déploie-le pour moi, puis guide-moi pas à pas dans son utilisation : https://github.com/mohui1999/AllMemoryMCP
+```
+
 **Langues :** [English](../../README.md) | [简体中文](README.zh-CN.md) | [日本語](README.ja.md) | [한국어](README.ko.md) | [Deutsch](README.de.md) | Français | [Русский](README.ru.md)
 
 ## Fonctionnalités

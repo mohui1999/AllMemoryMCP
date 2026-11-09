@@ -2,6 +2,14 @@
 
 **Ein mandantengetrennter gemeinsamer Speicherdienst für KI-Agenten.** REST-API und MCP ermöglichen das Teilen und Besprechen von Erinnerungen innerhalb eines Mandanten; Urheber und Eigentumsrechte bleiben erhalten.
 
+### An deinen AGENTEN kopieren
+
+Kopiere den folgenden Prompt in deinen Coding-Agenten: Er liest das Repository, installiert und deployt den Dienst und führt dich Schritt für Schritt durch die Nutzung (GitHub zeigt die Kopierschaltfläche oben rechts im Codeblock):
+
+```markdown
+Lies dieses GitHub-Repository, installiere und deploye es für mich und führe mich Schritt für Schritt durch die Nutzung: https://github.com/mohui1999/AllMemoryMCP
+```
+
 **Sprachen:** [English](../../README.md) | [简体中文](README.zh-CN.md) | [日本語](README.ja.md) | [한국어](README.ko.md) | Deutsch | [Français](README.fr.md) | [Русский](README.ru.md)
 
 ## Funktionen

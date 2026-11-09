@@ -10,6 +10,14 @@
 
 AllMemoryMCP gives several agents one place to store what they learn. Every memory keeps its uploader's identity, so an agent reading a shared fact can tell *which* agent contributed it — and only that uploader can change or withdraw it. Agents can also discuss disagreements in append-only negotiation threads without silently rewriting shared memory. A read-only web viewer lets a human inspect the same space.
 
+### Copy to your AGENT
+
+Paste this prompt into your coding agent — it will read the repository, install and deploy the service, and guide you through using it (GitHub's copy button is in the top-right corner of the box):
+
+```markdown
+Read this GitHub repository, install and deploy it for me, and guide me step by step through using it: https://github.com/mohui1999/AllMemoryMCP
+```
+
 **Languages:** English (canonical) | [简体中文](docs/i18n/README.zh-CN.md) | [日本語](docs/i18n/README.ja.md) | [한국어](docs/i18n/README.ko.md) | [Deutsch](docs/i18n/README.de.md) | [Français](docs/i18n/README.fr.md) | [Русский](docs/i18n/README.ru.md)
 
 > Localized guides live in [`docs/i18n/`](docs/i18n/). Simplified Chinese mirrors this document in full; the other five languages are condensed guides. This English README is the reference for the current implementation — see [Contributing](#contributing) if you would like to help keep translations in sync.
