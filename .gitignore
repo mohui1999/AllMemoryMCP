@@ -14,6 +14,7 @@ __pycache__/
 .ai-memory/
 
 # Local design and development notes (README remains trackable)
+/TODO.md
 /docs/ARCHITECTURE.md
 /docs/DEV-DOC.md
 /docs/TEAM-MEMORY-DESIGN.md
