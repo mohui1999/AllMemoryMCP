@@ -132,7 +132,7 @@ curl -X POST http://127.0.0.1:8099/v1/admin/credentials \
   -d '{"tenant_id":"default","agent_id":"viewer-alice","scopes":["read"]}'
 ```
 
-Remettez `viewer-alice` et le jeton à l’utilisateur. L’interface refuse les identifiants avec droits d’écriture et conserve le jeton uniquement en mémoire pendant la session de la page.
+Remettez `viewer-alice` et le jeton à l’utilisateur. L’interface accepte un identifiant en lecture seule ou un jeton admin pour la console d’administration, et conserve le jeton uniquement en mémoire pendant la session de la page.
 
 ## Base de données et licence
 

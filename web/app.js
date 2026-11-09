@@ -5,6 +5,9 @@
     credential: null,
     username: null,
     tenantId: null,
+    role: "viewer",
+    credentials: [],
+    showRevoked: false,
     view: "memories",
     items: [],
     threads: [],
@@ -18,7 +21,7 @@
 
   const $ = (id) => document.getElementById(id);
   const SVG_NS = "http://www.w3.org/2000/svg";
-  const VIEW_TITLES = { memories: "Memories", discussions: "Discussions", about: "About" };
+  const VIEW_TITLES = { memories: "Memories", discussions: "Discussions", about: "About", admin: "Administration" };
 
   function el(tag, cls, text) {
     const node = document.createElement(tag);
@@ -152,14 +155,33 @@
 
   function switchView(name) {
     if (!VIEW_TITLES[name]) return;
+    // An admin token authenticates admin routes only; sending it to the agent
+    // memory routes would return 401 and end the session.
+    if (state.role === "admin" && (name === "memories" || name === "discussions")) return;
+    if (name === "admin" && state.role !== "admin") return;
     state.view = name;
     updateViewUI();
     if (name === "discussions" && !state.threadLoaded) loadThreads();
+    if (name === "admin") loadCredentials();
+  }
+
+  function sessionChrome(isAdmin) {
+    $("nav-admin").hidden = !isAdmin;
+    $("mobile-nav-admin").hidden = !isAdmin;
+    document.querySelectorAll('[data-view="memories"], [data-view="discussions"]')
+      .forEach((button) => { button.hidden = isAdmin; });
+    $("access-badge").textContent = isAdmin ? "ADMIN" : "READ-ONLY";
+    $("side-access").textContent = isAdmin ? "administrator" : "read only";
+    $("side-foot").replaceChildren(
+      el("span", "pulse-dot"),
+      document.createTextNode(isAdmin ? " v0.4.0 · administrator" : " v0.4.0 · read-only viewer")
+    );
   }
 
   function showViewer(data) {
+    state.role = data.role === "admin" ? "admin" : "viewer";
     state.username = data.username;
-    state.tenantId = data.tenant_id || "default";
+    state.tenantId = data.tenant_id === "*" ? "all tenants" : (data.tenant_id || "default");
     $("login-view").hidden = true;
     $("app-view").hidden = false;
     $("current-user").textContent = state.username;
@@ -168,13 +190,17 @@
     $("side-tenant").textContent = state.tenantId;
     $("profile-avatar").textContent = initials(state.username);
     $("profile-avatar").style.background = avatarStyle(state.username);
-    switchView("memories");
+    sessionChrome(state.role === "admin");
+    switchView(state.role === "admin" ? "admin" : "memories");
   }
 
   function logout(showLoginError = false) {
     state.credential = null;
     state.username = null;
     state.tenantId = null;
+    state.role = "viewer";
+    state.credentials = [];
+    state.showRevoked = false;
     state.items = [];
     state.threads = [];
     state.selectedId = null;
@@ -191,9 +217,14 @@
     $("thread-detail").replaceChildren();
     $("stat-grid").replaceChildren();
     $("type-filters").replaceChildren();
-    $("view-memories").hidden = false;
-    $("view-discussions").hidden = true;
-    $("view-about").hidden = true;
+    $("admin-result").hidden = true;
+    $("admin-token").textContent = "";
+    $("admin-config").textContent = "";
+    $("admin-agents").replaceChildren();
+    $("admin-error").hidden = true;
+    $("admin-issue-error").hidden = true;
+    $("admin-show-revoked").checked = false;
+    sessionChrome(false);
     state.view = "memories";
     updateViewUI();
     $("login-error").textContent = showLoginError
@@ -644,6 +675,170 @@
     }
   }
 
+  // -- Administration ------------------------------------------------------
+  function mcpConfig(token) {
+    const url = new URL("mcp", document.baseURI).href;
+    return JSON.stringify({
+      mcpServers: {
+        allmemory: { url, headers: { Authorization: `Bearer ${token}` } },
+      },
+    }, null, 2);
+  }
+
+  function showIssued(result) {
+    $("admin-token").textContent = result.token || "";
+    $("admin-config").textContent = mcpConfig(result.token || "");
+    $("admin-result-sub").textContent = result.agent_id
+      ? `Issued for ${result.agent_id} (${result.tenant_id}). The server keeps only a SHA-256 hash, so this token cannot be shown again.`
+      : "The server keeps only a SHA-256 hash, so this token cannot be shown again.";
+    $("admin-result").hidden = false;
+  }
+
+  function clearIssued() {
+    $("admin-result").hidden = true;
+    $("admin-token").textContent = "";
+    $("admin-config").textContent = "";
+  }
+
+  async function adminRequest(url, method = "GET", payload = null) {
+    const options = { method };
+    if (payload) {
+      options.headers = { "Content-Type": "application/json" };
+      options.body = JSON.stringify(payload);
+    }
+    try {
+      return await request(url, options);
+    } catch (error) {
+      toast(error.message, "error");
+      return null;
+    }
+  }
+
+  async function loadCredentials() {
+    if (state.role !== "admin" || !state.credential) return;
+    $("admin-error").hidden = true;
+    try {
+      const data = await request(`v1/admin/credentials?include_revoked=${state.showRevoked}`);
+      state.credentials = (data && data.items) || [];
+      renderCredentials();
+    } catch (error) {
+      if (state.credential) {
+        $("admin-error").textContent = error.message;
+        $("admin-error").hidden = false;
+      }
+    }
+  }
+
+  function credentialStatus(row) {
+    if (row.revoked_at) return "revoked";
+    if (row.expires_at && new Date(row.expires_at).valueOf() < Date.now()) return "expired";
+    return "active";
+  }
+
+  function renderCredentials() {
+    const list = $("admin-agents");
+    list.replaceChildren();
+    $("admin-count").textContent = `${state.credentials.length} total`;
+    $("admin-empty").hidden = state.credentials.length > 0;
+    state.credentials.forEach((row) => {
+      const status = credentialStatus(row);
+      const card = el("article", `agent-card${status === "active" ? "" : " inactive"}`);
+      const head = el("div", "agent-head");
+      const avatar = el("span", "agent-avatar", initials(row.agent_id));
+      avatar.style.background = avatarStyle(row.agent_id);
+      const idBox = el("div", "agent-id");
+      idBox.append(el("strong", "", row.agent_id),
+        el("small", "", `${row.tenant_id} · ${String(row.id).slice(0, 8)}`));
+      head.append(avatar, idBox, el("span", `agent-badge ${status}`, status));
+
+      const meta = el("div", "agent-meta");
+      (row.scopes || []).forEach((scope) => meta.append(el("span", "agent-scope", scope)));
+      meta.append(el("span", "agent-date", `Created ${relativeTime(row.created_at)}`));
+      if (row.expires_at) meta.append(el("span", "agent-date", `Expires ${dateLabel(row.expires_at)}`));
+
+      const actions = el("div", "agent-actions");
+      if (status === "active") {
+        const rotate = el("button", "secondary-button", "Rotate");
+        rotate.type = "button";
+        rotate.addEventListener("click", async () => {
+          if (!window.confirm(`Rotate ${row.agent_id}'s token? The current token stops working immediately.`)) return;
+          const issued = await adminRequest(`v1/admin/credentials/${row.id}/rotate`, "POST");
+          if (!issued) return;
+          showIssued(issued);
+          toast(`Rotated ${row.agent_id}`);
+          await loadCredentials();
+        });
+        const revoke = el("button", "secondary-button", "Revoke");
+        revoke.type = "button";
+        revoke.addEventListener("click", async () => {
+          if (!window.confirm(`Revoke ${row.agent_id}'s access? Memories are kept.`)) return;
+          const done = await adminRequest(`v1/admin/credentials/${row.id}/revoke`, "POST");
+          if (!done) return;
+          toast(`Revoked ${row.agent_id}`);
+          await loadCredentials();
+        });
+        actions.append(rotate, revoke);
+      }
+      const remove = el("button", "secondary-button danger", "Remove");
+      remove.type = "button";
+      remove.addEventListener("click", async () => {
+        if (!window.confirm(`Permanently remove ${row.agent_id}'s credential record? Memories are kept and this cannot be undone.`)) return;
+        const done = await adminRequest(`v1/admin/credentials/${row.id}`, "DELETE");
+        if (!done) return;
+        toast(`Removed ${row.agent_id}`);
+        await loadCredentials();
+      });
+      actions.append(remove);
+      card.append(head, meta, actions);
+      list.append(card);
+    });
+  }
+
+  $("admin-issue-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const agentId = $("admin-agent-id").value.trim();
+    const tenantId = $("admin-tenant-id").value.trim() || "default";
+    const scopes = [];
+    if ($("admin-scope-read").checked) scopes.push("read");
+    if ($("admin-scope-write").checked) scopes.push("write");
+    const error = $("admin-issue-error");
+    error.hidden = true;
+    if (!agentId || !scopes.length) {
+      error.textContent = "Enter an agent id and select at least one scope.";
+      error.hidden = false;
+      return;
+    }
+    const expiresRaw = $("admin-expires").value;
+    const body = { tenant_id: tenantId, agent_id: agentId, scopes };
+    if (expiresRaw) body.expires_at = new Date(expiresRaw).toISOString().replace("Z", "+00:00");
+    const button = $("admin-issue-submit");
+    const label = button.querySelector("span");
+    button.disabled = true;
+    label.textContent = "Issuing…";
+    const issued = await adminRequest("v1/admin/credentials", "POST", body);
+    button.disabled = false;
+    label.textContent = "Issue credential";
+    if (!issued) {
+      error.textContent = "Could not issue the credential. See the notification for details.";
+      error.hidden = false;
+      return;
+    }
+    showIssued(issued);
+    $("admin-agent-id").value = "";
+    $("admin-expires").value = "";
+    toast(`Credential issued for ${agentId}`);
+    await loadCredentials();
+  });
+
+  $("admin-copy-token").addEventListener("click", () => copyText($("admin-token").textContent));
+  $("admin-copy-config").addEventListener("click", () => copyText($("admin-config").textContent));
+  $("admin-dismiss-result").addEventListener("click", clearIssued);
+  $("admin-show-revoked").addEventListener("change", (event) => {
+    state.showRevoked = event.currentTarget.checked;
+    loadCredentials();
+  });
+  $("admin-refresh").addEventListener("click", () => loadCredentials());
+
   // -- Events --------------------------------------------------------------
   $("login-theme-button").addEventListener("click", toggleTheme);
   $("theme-button").addEventListener("click", toggleTheme);
@@ -659,7 +854,7 @@
 
   $("login-form").addEventListener("submit", async (event) => {
     event.preventDefault();
-    const username = $("username").value.trim();
+    const username = $("username").value.trim() || "admin";
     const credential = $("credential").value.trim();
     const button = $("login-submit");
     const label = button.querySelector("span");
@@ -677,7 +872,7 @@
       if (!response.ok) throw new Error(apiError(data, "Sign-in failed. Check your username and credential."));
       state.credential = credential;
       showViewer(data);
-      await Promise.all([loadMemories(), loadThreads()]);
+      if (state.role !== "admin") await Promise.all([loadMemories(), loadThreads()]);
     } catch (error) {
       $("login-error").textContent = error.message;
       $("login-error").hidden = false;
@@ -719,7 +914,8 @@
     const button = event.currentTarget;
     button.classList.add("is-loading");
     state.threadLoaded = false;
-    if (state.view === "discussions") await loadThreads();
+    if (state.view === "admin") await loadCredentials();
+    else if (state.view === "discussions") await loadThreads();
     else if (state.view === "memories") await Promise.all([loadMemories(), loadThreads()]);
     else toast("About this space is static");
     button.classList.remove("is-loading");

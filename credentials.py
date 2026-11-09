@@ -80,6 +80,21 @@ def revoke_credential(cred_id: str) -> bool:
         return True
 
 
+def delete_credential(cred_id: str) -> bool:
+    """Remove a credential row entirely. Memories and audit records are kept.
+
+    Revoke is reversible only in the sense that the row is kept for audit; this
+    is the explicit "remove this agent's access record" operation used by the
+    admin console. It never deletes memories uploaded by that agent.
+    """
+    with session() as s:
+        c = s.get(AgentCredential, cred_id)
+        if not c:
+            return False
+        s.delete(c)
+        return True
+
+
 def rotate_credential(cred_id: str) -> dict[str, Any] | None:
     with session() as s:
         c = s.get(AgentCredential, cred_id)

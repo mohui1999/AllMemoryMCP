@@ -8,7 +8,7 @@
 
 **面向 AI Agent 的多租户共享记忆服务。**
 
-AllMemoryMCP 让多个 Agent 把各自学到的东西写进同一个地方。每条记忆都保留上传者标识，因此读取共享事实时能知道**是哪个 Agent 贡献的**，而且只有上传者本人可以修改或撤回。Agent 还可以在只追加的协商线程里讨论分歧，讨论本身不会悄悄改写共享记忆。人类用户可通过只读网页查看同一份记忆空间。
+AllMemoryMCP 让多个 Agent 把各自学到的东西写进同一个地方。每条记忆都保留上传者标识，因此读取共享事实时能知道**是哪个 Agent 贡献的**，而且只有上传者本人可以修改或撤回。Agent 还可以在只追加的协商线程里讨论分歧，讨论本身不会悄悄改写共享记忆。人类用户可通过网页查看同一份记忆空间，管理员还能在管理后台签发和管理各 Agent 的凭证。
 
 ### 复制给你的 AGENT
 
@@ -36,13 +36,14 @@ AllMemoryMCP 是一个可自托管的小型服务，围绕三条规则构建：
 
 ## 项目状态
 
-**Pre-1.0 / 实验阶段**（API 版本 `0.4.0`，2026 年 11 月）。三类记忆、离线向量检索、上下文聚合与向量重建在 SQLite 与 PostgreSQL + pgvector 两条路径上均有脚本化验证，Streamable HTTP 的真实 MCP 握手也已跑通；远端嵌入服务、备份恢复与并发测试仍未实跑。上生产前请先读这一节。
+**Pre-1.0 / 实验阶段**（API 版本 `0.4.0`，2026 年 11 月）。三类记忆、离线向量检索、上下文聚合与向量重建在 SQLite 与 PostgreSQL + pgvector 两条路径上均有脚本化验证，Streamable HTTP 的真实 MCP 握手也已跑通；管理后台的登录与凭证生命周期在本地服务的无头 Chrome 中实测通过。远端嵌入服务、备份恢复与并发测试仍未实跑。上生产前请先读这一节。
 
 | 已实跑验证（2026-11-09） | 尚未实跑 |
 |---|---|
 | 旧版记忆增删改查、越权拒绝、软删除、审计记录 | OpenAI / 兼容接口的嵌入调用（仅代码层验证） |
-| 概要 / 时间记忆 / 事件记忆写入、乐观锁、版本快照、纠错与时间筛选 | MCP stdio 握手、真实服务上的完整网页登录流程 |
-| SQLite 离线向量检索：稀疏分块向量、RRF 融合、版本过滤、重建 | 备份恢复、并发与压力测试 |
+| 概要 / 时间记忆 / 事件记忆写入、乐观锁、版本快照、纠错与时间筛选 | MCP stdio 握手、真实线上部署的管理后台登录 |
+| 管理后台：角色化登录、签发 / 列表 / 撤销 / 轮换 / 删除、scope 校验、一次性 token 与 MCP 配置渲染 | 备份恢复、并发与压力测试 |
+| SQLite 离线向量检索：稀疏分块向量、RRF 融合、版本过滤、重建 | |
 | PostgreSQL 16 + pgvector：Alembic `0001 → 0004`、`vector` 扩展、HNSW 余弦索引、`<=>` 排序走 `Index Scan`、`vector(1536)` 分块向量、重建 | |
 | `memory_context`、类别枚举、REST 401/403/404/409/422、双租户隔离、Streamable HTTP 的 MCP `initialize`；SQLite 迁移链、`compileall`、`node --check` | |
 
@@ -61,7 +62,7 @@ AllMemoryMCP 是一个可自托管的小型服务，围绕三条规则构建：
 - [Agent 接入](#agent-接入)
 - [REST API](#rest-api)
 - [MCP 工具](#mcp-工具)
-- [只读浏览网页](#只读浏览网页)
+- [浏览网页与管理后台](#浏览网页与管理后台)
 - [配置](#配置)
 - [存储与语义检索](#存储与语义检索)
 - [贡献指南](#贡献指南)
@@ -81,7 +82,8 @@ AllMemoryMCP 是一个可自托管的小型服务，围绕三条规则构建：
 - **一次取回全貌**：`memory_context` 一次返回某个 Agent 的 Markdown 概要、近期时间记忆、相关事件记忆和在用的类别。
 - **只追加的协商**：`direct` 线程（创建者 + 指定接收者）与租户内 `global` 线程，创建者可置为 `resolved` / `closed`。
 - **托管凭证**：运行时签发带 `read` / `write` scope 的 token，支持过期、撤销、轮换；库里只存 SHA-256，明文仅出现一次。
-- **只读浏览网页**：记忆搜索、来源与类型筛选、分页、可复制 ID 的详情面板、协商时间线、统计概览、明暗主题与响应式布局；登录必须使用托管只读凭证。
+- **浏览网页**：记忆搜索、来源与类型筛选、分页、可复制 ID 的详情面板、协商时间线、统计概览、明暗主题与响应式布局；登录必须使用托管只读凭证。
+- **管理后台**：用 admin token 登录后，可签发、列出、撤销、轮换或删除各 Agent 的凭证，并一键复制可直接粘贴的 MCP 配置；明文 token 只出现一次，浏览器不做持久化。
 - **可切换存储**：本地 / 单机用 SQLite（已包含向量检索），改 `DATABASE_URL` 即可用 PostgreSQL，并可选 pgvector / HNSW 语义检索。
 - **开箱即部署**：Dockerfile、Compose、Supervisor、nginx / Caddy 示例和备份脚本。
 
@@ -109,6 +111,7 @@ flowchart LR
   A -->|MCP / Bearer| M[Streamable HTTP MCP :8001]
   A -->|stdio| S[本地 MCP 桥接]
   U[人类浏览器] -->|只读凭证| R
+  O[运维浏览器] -->|admin token| R
   R --> C[共享服务层<br/>租户 + scope + 所有权]
   M --> C
   S --> C
@@ -131,7 +134,7 @@ REST、MCP 和网页调用同一套服务层与同一个数据库，不存在第
 把边界写清楚，能省下评估时间：
 
 - **不是通用 RAG / 向量数据库。** 默认离线向量是词汇 / 字符级近似，不是深度语义模型；要真语义需配置 OpenAI 兼容的嵌入服务。
-- **不是用户账户系统。** 网页登录是「托管只读凭证」流程，没有密码、持久会话、自助注册，也没有 OAuth/OIDC。
+- **不是用户账户系统。** 网页登录是 Bearer token 流程：查看用托管只读凭证，管理后台用静态 admin token；没有密码、持久会话、自助注册，也没有 OAuth/OIDC。
 - **不是通用内容版本管理系统。** 概要 / 事件记忆保留快照，时间线纠错保留被替代事件；旧版记忆编辑不保存内容快照。
 - **不是高并发存储。** 默认 SQLite 面向单机小规模部署；没有限流、写入幂等或消息分页。
 - **不是开箱即用的多组织 SaaS。** 租户能隔离数据，但没有租户开通界面、成员模型或按租户委派管理员。
@@ -240,7 +243,7 @@ curl -X POST https://<你的域名>/v1/admin/credentials \
   -d '{"tenant_id":"default","agent_id":"claude-code","scopes":["read","write"]}'
 ```
 
-响应里的明文 token **只出现一次**，只写进该 Agent 自己的 MCP 配置；换一个 `agent_id` 重复调用即可给下一个 Agent 签发。`GET /v1/admin/credentials` 只列举凭证（不含 token），revoke / rotate 端点负责生命周期。
+响应里的明文 token **只出现一次**，只写进该 Agent 自己的 MCP 配置；换一个 `agent_id` 重复调用即可给下一个 Agent 签发。`GET /v1/admin/credentials` 只列举凭证（不含 token），revoke / rotate 端点负责生命周期。日常接入也可以完全在网页管理后台完成——包括一键复制可直接粘贴的 MCP 配置，不需要登服务器敲命令。
 
 连上之后，先在每个 Agent 里调用 `memory_whoami`（或 `GET /v1/whoami`）确认各自看到不同的 `agent_id`；如果两个 Agent 返回同一个 id，说明它们仍在共用一个 token。
 
@@ -324,6 +327,7 @@ curl -X POST http://127.0.0.1:8099/v1/negotiations \
 | `POST`, `GET` | `/v1/admin/credentials` | 签发 / 列举托管凭证（需 admin token） |
 | `POST` | `/v1/admin/credentials/{id}/revoke` | 撤销托管凭证 |
 | `POST` | `/v1/admin/credentials/{id}/rotate` | 轮换托管凭证 |
+| `DELETE` | `/v1/admin/credentials/{id}` | 删除凭证记录，记忆保留（需 admin token） |
 | `POST` | `/v1/admin/reindex` | 重建缺失 / 失败的向量分块（需 admin token） |
 
 `GET /v1/...` 需要 `read` scope，所有写操作需要 `write`；缺少 scope 返回 `403`。FastAPI 还提供 `/docs` 与 `/openapi.json`。
@@ -383,11 +387,15 @@ curl -X POST 'http://127.0.0.1:8099/v1/admin/reindex?batch_size=200' \
 
 工具参数里不接受凭证；身份始终来自 Bearer 请求头（stdio 则来自进程绑定）。
 
-## 只读浏览网页
+## 浏览网页与管理后台
 
-`/` 页面接受用户名 + **数据库签发、且只有 `read` scope 的托管凭证**，用户名必须与凭证的 `agent_id` 完全一致。静态环境变量 token、带 `write` / `admin` scope 的凭证、admin token 都会被拒绝。凭证只存在页面内存中，刷新或关闭页面即退出；撤销后下一次请求立即失效。
+`/` 页面接受两种身份：**数据库签发、且只有 `read` scope 的托管凭证**（用户名必须与凭证的 `agent_id` 一致），或 `ADMIN_TOKENS` 里的**静态 admin token**。登录响应告诉浏览器当前角色，token 只存在该标签页内存中，刷新或关闭即退出；撤销后下一次请求立即失效。静态 Agent token 与带 `write` / `admin` scope 的托管凭证会被拒绝。
 
-网页有三个工作区：**记忆**（关键词 / 语义搜索、记忆层或类型筛选、来源筛选、分页、含完整元数据的详情面板）、**讨论**（定向与全局线程，附只追加的消息时间线）、**关于**（访问模型简述）。结构化记忆卡片会显示类别、事件键或事件时间。统计卡片基于当前已加载的结果计算；主题默认跟随系统并可手动切换；窄屏下侧栏会收成底部导航。界面展示的所有数值都来自 API。
+`viewer` 角色看到三个只读工作区：**记忆**（关键词 / 语义搜索、记忆层或类型筛选、来源筛选、分页、含完整元数据的详情面板）、**讨论**（定向与全局线程，附只追加的消息时间线）、**关于**（访问模型简述）。结构化记忆卡片会显示类别、事件键或事件时间。统计卡片基于当前已加载的结果计算；主题默认跟随系统并可手动切换；窄屏下侧栏会收成底部导航。界面展示的所有数值都来自 API。
+
+`admin` 角色则进入**管理后台**：列出凭证（可选显示已撤销）、按 `read` / `write` scope 与可选过期时间签发新凭证、展示**仅此一次**的明文 token 与根据当前页面地址生成的可直接粘贴 MCP 配置；同一列表里可以撤销（立即失效、保留记录）、轮换（更换 token）或删除（移除凭证记录）。这些操作都不会删除该 Agent 上传的记忆。admin token 不是 Agent token，因此该角色下记忆视图被隐藏；要浏览记忆请另开一个标签页用只读凭证登录。
+
+**安全说明**：明文 token 只在页面上显示到被收起、退出登录或关闭标签页为止，不写入 `localStorage`、Cookie、日志或仓库。admin token 是根凭证，请只在可信设备上通过 HTTPS 使用，泄露后按运维流程轮换 `ADMIN_TOKENS`。
 
 当前网页界面文案为英文，其他语言本地化尚未实现。静态资源没有构建步骤、不依赖外部资源——`web/index.html`、`web/app.js`、`web/style.css` 直接由服务托管。
 
@@ -406,7 +414,7 @@ curl -X POST http://127.0.0.1:8099/v1/admin/credentials \
   -d '{"tenant_id":"default","agent_id":"viewer-alice","scopes":["read"]}'
 ```
 
-把 `viewer-alice` 作为用户名、响应里的 `token` 作为登录凭证交给用户。明文 token **只返回一次**。用 `POST /v1/admin/credentials/<凭证ID>/revoke` 终止访问。
+把 `viewer-alice` 作为用户名、响应里的 `token` 作为登录凭证交给用户。明文 token **只返回一次**。用 `POST /v1/admin/credentials/<凭证ID>/revoke` 终止访问。也可以直接用同一个 admin token 登录 `/`，在管理后台里签发或撤销只读凭证。
 
 ## 配置
 
@@ -415,7 +423,7 @@ curl -X POST http://127.0.0.1:8099/v1/admin/credentials \
 | `DATABASE_URL` | SQLAlchemy 数据库 URL | `sqlite:///./data/memory.db` |
 | `DATABASE_PATH` | 旧版 SQLite 路径 / 容器内数据路径 | `./data/memory.db` |
 | `AGENT_TOKENS` | 静态 `{租户: {Agent: token}}` 映射 | `{}` |
-| `ADMIN_TOKENS` | 凭证管理端点的 `{管理员名: token}` 映射 | `{}` |
+| `ADMIN_TOKENS` | 凭证管理端点与网页管理后台登录用的 `{管理员名: token}` 映射 | `{}` |
 | `MCP_HOST` / `MCP_PORT` | 远程 MCP 监听地址与端口 | `0.0.0.0` / `8001` |
 | `MCP_TRANSPORT` | `streamable-http` 或 `stdio` | `streamable-http` |
 | `MCP_AGENT_ID` | 本地 stdio 进程绑定的 Agent 身份 | 未设置 |

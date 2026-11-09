@@ -17,8 +17,8 @@ from memory_service import (
     update_event_memory, upsert_agent_summary, upsert_event_memory,
 )
 from credentials import (
-    authenticate_admin, issue_credential, list_credentials, revoke_credential,
-    rotate_credential, verify_token,
+    authenticate_admin, delete_credential, issue_credential, list_credentials,
+    revoke_credential, rotate_credential, verify_token,
 )
 
 app = FastAPI(title="AllMemoryMCP API", version="0.4.0",
@@ -133,12 +133,22 @@ def viewer_page():
 
 @app.post("/viewer/login")
 def viewer_login(body: ViewerLogin):
-    """Accept only a managed, read-only credential for the supplied username."""
+    """Sign in as a read-only viewer, or as an administrator (admin console).
+
+    Admin tokens come from ADMIN_TOKENS and are never stored in the credential
+    table. The browser keeps either token in memory only; the role in the
+    response tells the viewer which panels to expose.
+    """
+    admin = authenticate_admin(body.credential)
+    if admin:
+        return {"username": admin.agent_id, "tenant_id": admin.tenant_id,
+                "role": "admin"}
     principal = verify_token(body.credential)
     if (not principal or principal.agent_id != body.username or "read" not in principal.scopes
             or "write" in principal.scopes or "admin" in principal.scopes):
         raise HTTPException(status_code=401, detail="Invalid username or read-only credential")
-    return {"username": principal.agent_id, "tenant_id": principal.tenant_id}
+    return {"username": principal.agent_id, "tenant_id": principal.tenant_id,
+            "role": "viewer"}
 
 
 @app.get("/health")
@@ -363,8 +373,14 @@ def admin_principal(authorization: Annotated[str | None, Header()] = None) -> Pr
 
 @app.post("/v1/admin/credentials", status_code=201)
 def admin_issue(body: CredentialIssue, _: Principal = Depends(admin_principal)):
+    if not body.agent_id.strip() or not body.tenant_id.strip():
+        raise HTTPException(status_code=422, detail="agent_id and tenant_id must not be blank")
+    if not body.scopes or set(body.scopes) - {"read", "write"}:
+        raise HTTPException(status_code=422,
+                            detail="scopes may only contain 'read' and/or 'write'")
     # The raw token is returned only here, once. Store it securely client-side.
-    return issue_credential(body.tenant_id, body.agent_id, body.scopes, body.expires_at)
+    return issue_credential(body.tenant_id.strip(), body.agent_id.strip(),
+                            list(dict.fromkeys(body.scopes)), body.expires_at)
 
 
 @app.get("/v1/admin/credentials")
@@ -387,6 +403,14 @@ def admin_rotate(cred_id: str, _: Principal = Depends(admin_principal)):
         raise HTTPException(status_code=404, detail="Credential not found or already revoked")
     # New raw token returned only here, once.
     return new
+
+
+@app.delete("/v1/admin/credentials/{cred_id}")
+def admin_delete(cred_id: str, _: Principal = Depends(admin_principal)):
+    """Remove a credential row. Memories uploaded by that agent are untouched."""
+    if not delete_credential(cred_id):
+        raise HTTPException(status_code=404, detail="Credential not found")
+    return {"deleted": True, "id": cred_id}
 
 
 @app.post("/v1/admin/reindex")

@@ -131,7 +131,7 @@ curl -X POST http://127.0.0.1:8099/v1/admin/credentials \
   -d '{"tenant_id":"default","agent_id":"viewer-alice","scopes":["read"]}'
 ```
 
-사용자에게 `viewer-alice`와 token을 전달합니다. 화면은 읽기 전용 자격 증명만 허용하며 token은 현재 페이지 메모리에만 저장합니다.
+사용자에게 `viewer-alice`와 token을 전달합니다. 화면은 읽기 전용 자격 증명 또는 관리자 토큰을 허용하며 token은 현재 페이지 메모리에만 저장합니다.
 
 ## 데이터베이스 및 라이선스
 

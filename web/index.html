@@ -97,16 +97,16 @@
     <div class="login-card">
       <div class="login-card-head">
         <span class="access-icon"><svg class="icon"><use href="#i-shield"></use></svg></span>
-        <span class="access-badge">READ-ONLY</span>
+        <span class="access-badge" id="access-badge">READ-ONLY</span>
       </div>
       <h2>Welcome back</h2>
-      <p class="card-sub">Sign in with the username and read-only credential issued for your agent.</p>
+      <p class="card-sub">Paste a read-only agent credential to browse memories, or an administrator token to manage agents and issue their MCP credentials.</p>
 
       <form id="login-form" class="login-form">
-        <label for="username">Username</label>
-        <div class="input-wrap"><svg class="icon input-icon"><use href="#i-user"></use></svg><input id="username" name="username" autocomplete="username" placeholder="e.g. viewer-alice" required></div>
+        <label for="username">Username <span class="admin-optional">agents only</span></label>
+        <div class="input-wrap"><svg class="icon input-icon"><use href="#i-user"></use></svg><input id="username" name="username" autocomplete="username" placeholder="e.g. viewer-alice"></div>
 
-        <label for="credential">Read-only credential</label>
+        <label for="credential">Credential or admin token</label>
         <div class="input-wrap has-toggle">
           <svg class="icon input-icon"><use href="#i-lock"></use></svg>
           <input id="credential" name="credential" type="password" autocomplete="current-password" placeholder="Paste your credential" required>
@@ -117,8 +117,8 @@
         <p id="login-error" class="form-error" role="alert" hidden></p>
       </form>
 
-      <div class="privacy-note"><svg class="icon"><use href="#i-shield"></use></svg><span>This viewer can only read. The credential stays in memory for this tab and is cleared when you sign out or close the page.</span></div>
-      <div class="login-card-foot">Need access? Ask an administrator to issue a credential with the <code>read</code> scope.</div>
+      <div class="privacy-note"><svg class="icon"><use href="#i-shield"></use></svg><span>The token stays in memory for this tab only and is cleared when you sign out or close the page. Administrators: the username field is ignored when an admin token is used.</span></div>
+      <div class="login-card-foot">Need access? Ask an administrator for a credential with the <code>read</code> scope, or sign in above to issue one.</div>
     </div>
   </div>
 
@@ -138,6 +138,7 @@
       <button class="nav-item active" type="button" data-view="memories"><svg class="icon"><use href="#i-grid"></use></svg><span>Memories</span><span class="nav-hint">01</span></button>
       <button class="nav-item" type="button" data-view="discussions"><svg class="icon"><use href="#i-chat"></use></svg><span>Discussions</span><span class="nav-hint">02</span></button>
       <button class="nav-item" type="button" data-view="about"><svg class="icon"><use href="#i-info"></use></svg><span>About</span><span class="nav-hint">03</span></button>
+      <button class="nav-item" id="nav-admin" type="button" data-view="admin" hidden><svg class="icon"><use href="#i-shield"></use></svg><span>Admin</span><span class="nav-hint">04</span></button>
     </nav>
 
     <div class="side-spacer"></div>
@@ -146,10 +147,10 @@
       <div class="side-card-title"><svg class="icon"><use href="#i-database"></use></svg> Current space</div>
       <div class="side-row"><span>Tenant</span><strong id="side-tenant">—</strong></div>
       <div class="side-row"><span>Signed in as</span><strong id="side-agent">—</strong></div>
-      <div class="side-row"><span>Access</span><strong class="accent-teal">read only</strong></div>
+      <div class="side-row"><span>Access</span><strong class="accent-teal" id="side-access">read only</strong></div>
     </div>
 
-    <div class="side-foot"><span class="pulse-dot"></span> v0.3.0 · read-only viewer</div>
+    <div class="side-foot" id="side-foot"><span class="pulse-dot"></span> v0.4.0 · read-only viewer</div>
   </aside>
 
   <div class="app-main">
@@ -250,12 +251,75 @@
       <div class="about-foot"><svg class="icon"><use href="#i-spark"></use></svg><span>Memories keep their source agent, version and timestamps. Threads are scoped conversations; resolving a thread never rewrites a memory.</span></div>
       <div class="about-links"><span class="about-links-label">Interfaces</span><code>GET /v1/memories</code><code>GET /v1/negotiations</code><code>/health</code><code>MCP · memory_* / negotiation_*</code></div>
     </section>
+
+    <!-- Administration -->
+    <section id="view-admin" class="view" hidden>
+      <div class="page-head">
+        <div>
+          <div class="eyebrow"><span class="eyebrow-bar"></span> ADMINISTRATION</div>
+          <h1>Agents &amp; access tokens</h1>
+          <p class="lead">Issue one dedicated MCP credential per agent, then revoke, rotate or remove it. Sharing a token makes every agent the same identity. To browse memories, sign in with a read-only credential in another tab.</p>
+        </div>
+        <span class="readonly-pill"><svg class="icon"><use href="#i-shield"></use></svg> Administrator</span>
+      </div>
+
+      <div class="admin-layout">
+        <div class="admin-column">
+          <article class="admin-card">
+            <div class="admin-card-head"><span class="admin-card-icon"><svg class="icon"><use href="#i-spark"></use></svg></span><div><h3>Issue a new credential</h3><p>The raw token is shown once. Copy it into that agent's own MCP configuration.</p></div></div>
+            <form id="admin-issue-form" class="admin-form">
+              <label for="admin-agent-id">Agent id</label>
+              <input id="admin-agent-id" type="text" autocomplete="off" placeholder="e.g. grokbot" required>
+              <label for="admin-tenant-id">Tenant</label>
+              <input id="admin-tenant-id" type="text" autocomplete="off" value="default" required>
+              <span class="admin-label">Scopes</span>
+              <div class="admin-scopes">
+                <label class="check-inline"><input id="admin-scope-read" type="checkbox" checked> <span>read</span></label>
+                <label class="check-inline"><input id="admin-scope-write" type="checkbox" checked> <span>write</span></label>
+              </div>
+              <label for="admin-expires">Expires at <span class="admin-optional">optional</span></label>
+              <input id="admin-expires" type="datetime-local">
+              <button id="admin-issue-submit" class="primary-button wide" type="submit"><span>Issue credential</span><svg class="icon"><use href="#i-arrow"></use></svg></button>
+              <p id="admin-issue-error" class="form-error" role="alert" hidden></p>
+            </form>
+          </article>
+
+          <article class="admin-card admin-result" id="admin-result" hidden>
+            <div class="admin-card-head"><span class="admin-card-icon teal-bg"><svg class="icon"><use href="#i-check"></use></svg></span><div><h3>Copy this now</h3><p id="admin-result-sub">The server stores only a SHA-256 hash. This token cannot be shown again.</p></div></div>
+            <div class="admin-token-row"><code id="admin-token"></code><button id="admin-copy-token" class="secondary-button" type="button">Copy token</button></div>
+            <span class="admin-label">MCP client configuration</span>
+            <pre id="admin-config" class="admin-code"></pre>
+            <div class="admin-result-actions"><button id="admin-copy-config" class="secondary-button" type="button">Copy config</button><button id="admin-dismiss-result" class="text-button" type="button">I saved it, hide</button></div>
+          </article>
+        </div>
+
+        <div class="admin-column">
+          <article class="admin-card">
+            <div class="results-head compact">
+              <div><strong>Issued credentials</strong><span id="admin-count" class="muted"></span></div>
+              <div class="admin-list-actions">
+                <label class="check-inline"><input id="admin-show-revoked" type="checkbox"> <span>Show revoked</span></label>
+                <button id="admin-refresh" class="icon-button" type="button" aria-label="Refresh credential list" title="Refresh"><svg class="icon"><use href="#i-refresh"></use></svg></button>
+              </div>
+            </div>
+            <div id="admin-agents" class="agent-list" aria-live="polite"></div>
+            <div id="admin-empty" class="empty-state" hidden>
+              <span class="empty-art"><svg class="icon"><use href="#i-plug"></use></svg></span>
+              <strong>No credentials yet</strong><p>Issue the first one on the left.</p>
+            </div>
+            <div id="admin-error" class="load-error" role="alert" hidden></div>
+          </article>
+          <div class="admin-note"><svg class="icon"><use href="#i-info"></use></svg><span><strong>Revoke</strong> disables an agent immediately but keeps the record. <strong>Rotate</strong> replaces the token. <strong>Remove</strong> deletes the credential row. None of these delete the memories that agent uploaded.</span></div>
+        </div>
+      </div>
+    </section>
   </div>
 
   <nav class="mobile-nav" aria-label="Mobile views">
     <button class="mobile-nav-item active" type="button" data-view="memories"><svg class="icon"><use href="#i-grid"></use></svg><span>Memories</span></button>
     <button class="mobile-nav-item" type="button" data-view="discussions"><svg class="icon"><use href="#i-chat"></use></svg><span>Threads</span></button>
     <button class="mobile-nav-item" type="button" data-view="about"><svg class="icon"><use href="#i-info"></use></svg><span>About</span></button>
+    <button class="mobile-nav-item" id="mobile-nav-admin" type="button" data-view="admin" hidden><svg class="icon"><use href="#i-shield"></use></svg><span>Admin</span></button>
   </nav>
 </div>
 

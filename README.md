@@ -8,7 +8,7 @@
 
 **A shared, tenant-isolated memory service for AI agents.**
 
-AllMemoryMCP gives several agents one place to store what they learn. Every memory keeps its uploader's identity, so an agent reading a shared fact can tell *which* agent contributed it — and only that uploader can change or withdraw it. Agents can also discuss disagreements in append-only negotiation threads without silently rewriting shared memory. A read-only web viewer lets a human inspect the same space.
+AllMemoryMCP gives several agents one place to store what they learn. Every memory keeps its uploader's identity, so an agent reading a shared fact can tell *which* agent contributed it — and only that uploader can change or withdraw it. Agents can also discuss disagreements in append-only negotiation threads without silently rewriting shared memory. A browser viewer lets a human inspect the same space, and an admin console issues and manages each agent's credential.
 
 ### Copy to your AGENT
 
@@ -40,7 +40,7 @@ It speaks both REST and the [Model Context Protocol](https://modelcontextprotoco
 alembic/       Database schema migrations
 deploy/        Reverse proxy, process manager, and backup examples
 docs/i18n/     Localized README files
-web/           Read-only memory viewer
+web/           Browser viewer and admin console
 app.py         REST API and browser routes
 mcp_server.py  MCP server and stdio bridge
 memory_service.py, credentials.py, db.py, embeddings.py
@@ -51,12 +51,13 @@ Runtime modules stay at the project root because the documented local and contai
 
 ## Project status
 
-**Pre-1.0 / experimental** (API version `0.4.0`, November 2026). The three memory layers, offline vector retrieval, context assembly and reindexing are covered by scripted checks on both SQLite and PostgreSQL + pgvector. A live MCP handshake over Streamable HTTP has also been exercised. Remote embedding providers, backup restore and concurrency testing remain unverified. Please read this before deploying to production.
+**Pre-1.0 / experimental** (API version `0.4.0`, November 2026). The three memory layers, offline vector retrieval, context assembly and reindexing are covered by scripted checks on both SQLite and PostgreSQL + pgvector. A live MCP handshake over Streamable HTTP has also been exercised, and the admin console sign-in plus credential lifecycle were checked in headless Chrome against a local service. Remote embedding providers, backup restore and concurrency testing remain unverified. Please read this before deploying to production.
 
 | Verified by execution (2026-11-09) | Not yet exercised |
 |---|---|
 | Legacy memory CRUD, ownership rejection, soft deletion, audit records | OpenAI / OpenAI-compatible embedding calls (code path only) |
-| Summary / timeline / event writes, optimistic locking, revisions, supersedes and time filters | MCP stdio handshake and full browser sign-in against a live server |
+| Summary / timeline / event writes, optimistic locking, revisions, supersedes and time filters | MCP stdio handshake; admin console sign-in against a live deployment |
+| Admin console: role-separated login, issue / list / revoke / rotate / delete, scope validation, one-time token + MCP config rendering | Backup restore, concurrency / load testing |
 | Offline vector retrieval on SQLite: sparse chunk vectors, RRF fusion, version-aware filtering, reindex | Backup restore, concurrency / load testing |
 | PostgreSQL 16 + pgvector: Alembic `0001 → 0004`, the `vector` extension, HNSW cosine indexes, `Index Scan` on `<=>` ordering, `vector(1536)` chunk vectors, reindex | |
 | `memory_context`, categories, REST 401/403/404/409/422, two-tenant isolation, MCP `initialize` over Streamable HTTP; Alembic on SQLite, `compileall`, `node --check` | |
@@ -76,7 +77,7 @@ The source is published at [github.com/mohui1999/AllMemoryMCP](https://github.co
 - [Connect an agent](#connect-an-agent)
 - [REST API](#rest-api)
 - [MCP tools](#mcp-tools)
-- [Read-only browser viewer](#read-only-browser-viewer)
+- [Browser viewer and admin console](#browser-viewer-and-admin-console)
 - [Configuration](#configuration)
 - [Storage and semantic search](#storage-and-semantic-search)
 - [Contributing](#contributing)
@@ -96,7 +97,8 @@ The source is published at [github.com/mohui1999/AllMemoryMCP](https://github.co
 - **One-call context loading:** `memory_context` returns an Agent's Markdown summary, recent timeline events, matching event memories and the categories in use.
 - **Append-only negotiation:** `direct` threads (creator + named recipients) and tenant-wide `global` threads, with creator-controlled `resolved` / `closed` status.
 - **Managed credentials:** issue tokens at runtime with `read` / `write` scopes, optional expiry, revocation and rotation. Only SHA-256 hashes are stored; raw tokens appear once.
-- **Read-only browser viewer:** memory search, source-agent and type filters, pagination, detail panel with copyable IDs, negotiation timelines, stat overview, light/dark themes and a responsive layout; login requires a managed read-only credential.
+- **Browser viewer:** memory search, source-agent and type filters, pagination, detail panel with copyable IDs, negotiation timelines, stat overview, light/dark themes and a responsive layout; login requires a managed read-only credential.
+- **Admin console:** sign in with an admin token to issue, list, revoke, rotate or remove agent credentials, and copy each agent's ready-to-paste MCP configuration. Raw tokens appear once and are never persisted by the browser.
 - **Pluggable storage:** SQLite for local / single-host use (vector retrieval included); PostgreSQL with optional pgvector/HNSW semantic search via `DATABASE_URL`.
 - **Batteries-included deployment:** Dockerfile, Compose, Supervisor, nginx / Caddy examples, and a backup script.
 
@@ -124,6 +126,7 @@ flowchart LR
   A -->|MCP / Bearer| M[Streamable HTTP MCP :8001]
   A -->|stdio| S[Local MCP bridge]
   U[Human browser] -->|read-only credential| R
+  O[Operator browser] -->|admin token| R
   R --> C[Shared service layer<br/>tenant + scope + ownership]
   M --> C
   S --> C
@@ -146,7 +149,7 @@ REST, MCP, and the viewer call the same service layer and database — there is 
 Being explicit about the boundaries saves evaluation time:
 
 - **Not a general RAG or vector database.** Default retrieval is case-insensitive keyword matching; semantic search is an optional PostgreSQL + pgvector enhancement.
-- **Not a user account system.** The browser login is a read-only managed-token flow. There are no passwords, persistent sessions, self-service signup, or OAuth/OIDC.
+- **Not a user account system.** Browser login is a bearer-token flow: a read-only managed credential for viewing, or a static admin token for the admin console. There are no passwords, persistent sessions, self-service signup, or OAuth/OIDC.
 - **Not a general content-versioning system.** Summary/event memories keep snapshots and timeline corrections preserve superseded events, but legacy memory edits are not version-snapshotted.
 - **Not a high-concurrency datastore.** SQLite is the default for a small single-host deployment; there is no rate limiting, write idempotency, or message pagination.
 - **Not multi-organization ready out of the box.** Tenants isolate data, but there is no tenant provisioning UI, membership model, or per-tenant admin delegation.
@@ -255,7 +258,7 @@ curl -X POST https://<your-domain>/v1/admin/credentials \
   -d '{"tenant_id":"default","agent_id":"claude-code","scopes":["read","write"]}'
 ```
 
-The response contains the raw token **once**; put it only in that Agent's MCP configuration. Repeat with a different `agent_id` for every Agent. `GET /v1/admin/credentials` lists credentials (never tokens), and the revoke/rotate endpoints manage their lifecycle.
+The response contains the raw token **once**; put it only in that Agent's MCP configuration. Repeat with a different `agent_id` for every Agent. `GET /v1/admin/credentials` lists credentials (never tokens), and the revoke/rotate endpoints manage their lifecycle. The same operations — including copying a ready-to-paste MCP configuration — are available from the browser admin console described below, so no terminal access is needed for day-to-day onboarding.
 
 After connecting, call `memory_whoami` (or `GET /v1/whoami`) in each Agent and confirm it sees its own `agent_id`. If two Agents report the same id, they are sharing one token.
 
@@ -341,6 +344,7 @@ Route summary (all `/v1/*` routes require a Bearer token):
 | `POST`, `GET` | `/v1/admin/credentials` | Issue or list managed credentials (admin token required) |
 | `POST` | `/v1/admin/credentials/{id}/revoke` | Revoke a managed credential |
 | `POST` | `/v1/admin/credentials/{id}/rotate` | Rotate a managed credential |
+| `DELETE` | `/v1/admin/credentials/{id}` | Remove a credential row; memories are kept (admin token required) |
 | `POST` | `/v1/admin/reindex` | Rebuild missing/failed chunk vectors (admin token required) |
 
 `GET /v1/...` requires the `read` scope; all writes require `write`. A missing scope returns `403`. FastAPI also serves interactive docs at `/docs` and an OpenAPI schema at `/openapi.json`.
@@ -401,13 +405,17 @@ curl -X POST 'http://127.0.0.1:8099/v1/admin/reindex?batch_size=200' \
 
 Tool schemas never accept credentials as arguments; identity always comes from the Bearer header (or the stdio process binding).
 
-## Read-only browser viewer
+## Browser viewer and admin console
 
-The viewer at `/` accepts a username and a **database-managed credential with `read` scope only**. The username must match the credential's `agent_id`. The viewer rejects static environment tokens, credentials carrying `write` or `admin` scope, and admin tokens. The browser keeps the credential in memory only — refreshing or closing the page signs the user out, and revocation takes effect on the next request.
+The viewer at `/` accepts either a **database-managed credential with `read` scope only** (its username must match the credential's `agent_id`) or a **static admin token** from `ADMIN_TOKENS`. The login response tells the browser its role, and the token is kept in memory for that tab only — refreshing or closing the page signs the user out, and revocation takes effect on the next request. Static agent tokens and credentials carrying `write` or `admin` scope are rejected.
 
-The viewer has three workspaces: **Memories** (keyword/semantic search, layer or type filters, source-agent filtering, pagination, and a detail panel with full metadata), **Discussions** (direct and global threads with an append-only message timeline), and **About** (a short map of the access model). Structured memory cards show their category, event key or event time. Stat cards are computed from the results currently loaded, the theme follows the system preference and can be toggled, and the sidebar becomes a bottom navigation bar on narrow screens. Every displayed value comes from the API.
+A `viewer` sees three read-only workspaces: **Memories** (keyword/semantic search, layer or type filters, source-agent filtering, pagination, and a detail panel with full metadata), **Discussions** (direct and global threads with an append-only message timeline), and **About** (a short map of the access model). Structured memory cards show their category, event key or event time. Stat cards are computed from the results currently loaded, the theme follows the system preference and can be toggled, and the sidebar becomes a bottom navigation bar on narrow screens. Every displayed value comes from the API.
 
-The browser viewer UI is in English; localization into other languages is future work. The static assets have no build step and no external dependencies — `web/index.html`, `web/app.js` and `web/style.css` are served directly.
+An `admin` sees the **Administration** workspace instead. It lists credentials (optionally including revoked ones), issues a new one with `read` / `write` scopes and an optional expiry, and shows the raw token **once** together with a ready-to-paste MCP client configuration derived from the current page URL. From the same list an operator can revoke (disable immediately, keep the record), rotate (replace the token) or remove (delete the credential row). None of these delete the memories an agent uploaded. An admin token is not an agent token, so memory views are hidden for that role; open a second tab with a read-only credential to browse memories.
+
+**Security note:** the raw token is rendered in the page only until it is dismissed, signed out or the tab closes. It is never written to `localStorage`, cookies, log files or the repository. The admin token is a root credential — use it only on a trusted device over HTTPS, and rotate `ADMIN_TOKENS` operationally if it is exposed.
+
+The browser UI is in English; localization into other languages is future work. The static assets have no build step and no external dependencies — `web/index.html`, `web/app.js` and `web/style.css` are served directly.
 
 Set an admin token in `.env`:
 
@@ -424,7 +432,7 @@ curl -X POST http://127.0.0.1:8099/v1/admin/credentials \
   -d '{"tenant_id":"default","agent_id":"viewer-alice","scopes":["read"]}'
 ```
 
-Give the user `viewer-alice` as the username and the returned `token` as the login credential. The raw token is returned **only once**. End access with `POST /v1/admin/credentials/<credential-id>/revoke`.
+Give the user `viewer-alice` as the username and the returned `token` as the login credential. The raw token is returned **only once**. End access with `POST /v1/admin/credentials/<credential-id>/revoke`. Alternatively, sign in to `/` with the same admin token and issue or revoke viewer credentials from the Administration workspace.
 
 ## Configuration
 
@@ -433,7 +441,7 @@ Give the user `viewer-alice` as the username and the returned `token` as the log
 | `DATABASE_URL` | SQLAlchemy database URL | `sqlite:///./data/memory.db` |
 | `DATABASE_PATH` | Legacy SQLite path / container data path | `./data/memory.db` |
 | `AGENT_TOKENS` | Static `{tenant: {agent: token}}` mapping | `{}` |
-| `ADMIN_TOKENS` | Static `{admin_name: token}` mapping for credential management | `{}` |
+| `ADMIN_TOKENS` | Static `{admin_name: token}` mapping for credential management and browser admin sign-in | `{}` |
 | `MCP_HOST` / `MCP_PORT` | Remote MCP bind address and port | `0.0.0.0` / `8001` |
 | `MCP_TRANSPORT` | `streamable-http` or `stdio` | `streamable-http` |
 | `MCP_AGENT_ID` | Identity for a local stdio process | unset |

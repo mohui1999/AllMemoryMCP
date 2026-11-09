@@ -132,7 +132,7 @@ curl -X POST http://127.0.0.1:8099/v1/admin/credentials \
   -d '{"tenant_id":"default","agent_id":"viewer-alice","scopes":["read"]}'
 ```
 
-Geben Sie `viewer-alice` und das Token an den Benutzer weiter. Die Weboberfläche akzeptiert nur Read-only-Zugangsdaten und hält das Token nur im Arbeitsspeicher der Seite.
+Geben Sie `viewer-alice` und das Token an den Benutzer weiter. Die Weboberfläche akzeptiert Read-only-Zugangsdaten oder ein Admin-Token für die Verwaltungsoberfläche und hält das Token nur im Arbeitsspeicher der Seite.
 
 ## Datenbank und Lizenz
 

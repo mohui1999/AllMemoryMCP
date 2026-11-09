@@ -132,7 +132,7 @@ curl -X POST http://127.0.0.1:8099/v1/admin/credentials \
   -d '{"tenant_id":"default","agent_id":"viewer-alice","scopes":["read"]}'
 ```
 
-Передайте пользователю имя `viewer-alice` и token. Интерфейс принимает только read-only credentials и хранит token только в памяти страницы.
+Передайте пользователю имя `viewer-alice` и token. Интерфейс принимает read-only credentials или admin token для панели управления и хранит token только в памяти страницы.
 
 ## База данных и лицензия
 

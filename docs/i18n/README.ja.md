@@ -133,7 +133,7 @@ curl -X POST http://127.0.0.1:8099/v1/admin/credentials \
   -d '{"tenant_id":"default","agent_id":"viewer-alice","scopes":["read"]}'
 ```
 
-ユーザーに `viewer-alice` と token を渡します。画面は読み取り専用資格情報のみを受け付け、token はページのメモリー内だけに保持します。
+ユーザーに `viewer-alice` と token を渡します。画面は読み取り専用資格情報または管理画面用の admin token を受け付け、token はページのメモリー内だけに保持します。
 
 ## データベースとライセンス
 
