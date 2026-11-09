@@ -35,7 +35,7 @@ AllMemoryMCP 是一个可自托管的小型服务，围绕三条规则构建：
 | 记忆增删改查、越权拒绝、软删除、审计记录 | PostgreSQL 后端与 pgvector / HNSW 路径 |
 | 双租户隔离：读、写、线程、留言 | OpenAI embedding 调用（仅代码层验证） |
 | 托管凭证：签发、校验、撤销、轮换、只读 scope | Streamable HTTP / stdio 的 MCP 握手 |
-| FastAPI `TestClient` 覆盖 REST 路由及 401/403 | 真实浏览器中的网页端到端 |
+| FastAPI `TestClient` 覆盖 REST 路由及 401/403 | 真实服务上的完整网页登录流程（界面渲染已用无头 Chrome + API 数据验证） |
 | Alembic `0001 → 0002 → 0003`（SQLite）、`compileall`、`node --check` | 备份恢复、并发与压力测试 |
 
 仓库里**目前没有随代码提交的自动化测试套件**——上述检查是本地临时脚本。补一套 `pytest` 是当前最有价值的贡献（见[路线图](#路线图与已知限制)）。
@@ -69,7 +69,7 @@ AllMemoryMCP 是一个可自托管的小型服务，围绕三条规则构建：
 - **来源与所有权**：结果包含 `owner_agent_id`；只有上传者能更新或软删除；所有写操作都写审计记录。
 - **只追加的协商**：`direct` 线程（创建者 + 指定接收者）与租户内 `global` 线程，创建者可置为 `resolved` / `closed`。
 - **托管凭证**：运行时签发带 `read` / `write` scope 的 token，支持过期、撤销、轮换；库里只存 SHA-256，明文仅出现一次。
-- **只读浏览网页**：搜索、按来源 Agent 筛选、分页、详情；登录必须使用托管只读凭证。
+- **只读浏览网页**：记忆搜索、来源与类型筛选、分页、可复制 ID 的详情面板、协商时间线、统计概览、明暗主题与响应式布局；登录必须使用托管只读凭证。
 - **可切换存储**：本地 / 单机用 SQLite，改 `DATABASE_URL` 即可用 PostgreSQL，并可选 pgvector 语义检索。
 - **开箱即部署**：Dockerfile、Compose、Supervisor、nginx / Caddy 示例和备份脚本。
 
@@ -294,7 +294,9 @@ curl -X POST http://127.0.0.1:8099/v1/negotiations \
 
 `/` 页面接受用户名 + **数据库签发、且只有 `read` scope 的托管凭证**，用户名必须与凭证的 `agent_id` 完全一致。静态环境变量 token、带 `write` / `admin` scope 的凭证、admin token 都会被拒绝。凭证只存在页面内存中，刷新或关闭页面即退出；撤销后下一次请求立即失效。
 
-当前网页界面文案为英文，其他语言本地化尚未实现。
+网页有三个工作区：**记忆**（搜索、来源与类型筛选、分页、含完整元数据的详情面板）、**讨论**（定向与全局线程，附只追加的消息时间线）、**关于**（访问模型简述）。统计卡片基于当前已加载的结果计算；主题默认跟随系统并可手动切换；窄屏下侧栏会收成底部导航。界面展示的所有数值都来自 API。
+
+当前网页界面文案为英文，其他语言本地化尚未实现。静态资源没有构建步骤、不依赖外部资源——`web/index.html`、`web/app.js`、`web/style.css` 直接由服务托管。
 
 先在 `.env` 配置管理员 token：
 
@@ -382,7 +384,7 @@ uvicorn app:app --host 127.0.0.1 --port 8099
 以下是候选方向，不是承诺，也没有排期：
 
 - **尚未实现**：OAuth/OIDC 登录、持久用户会话、可写入的网页界面、租户开通界面、凭证自助申请、角色管理、跨租户共享。
-- **需真实环境验证**：PostgreSQL + pgvector、OpenAI embeddings、Streamable HTTP / stdio 的 MCP 握手、浏览器端到端、备份恢复、并发与压力测试。
+- **需真实环境验证**：PostgreSQL + pgvector、OpenAI embeddings、Streamable HTTP / stdio 的 MCP 握手、真实服务上的完整网页登录流程、备份恢复、并发与压力测试。
 - **加固**：随仓库提交的 `pytest` 套件与 CI、写入幂等、消息分页、语义重排、凭证限流、自动恢复校验。
 - **体验**：网页界面除英文外的本地化。
 - **生态**：为主流 Agent 提供官方 MCP 客户端配置示例，并让各语言 README 与本文件保持同步。

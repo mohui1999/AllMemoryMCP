@@ -50,7 +50,7 @@ Runtime modules stay at the project root because the documented local and contai
 | Memory CRUD, ownership rejection, soft deletion, audit records | PostgreSQL backend and the pgvector / HNSW path |
 | Two-tenant isolation across reads, writes, threads and messages | OpenAI embedding calls (code path only) |
 | Managed credentials: issue, verify, revoke, rotate, read-only scope | MCP handshake over Streamable HTTP and stdio |
-| REST routes via FastAPI `TestClient`, including 401/403 paths | Browser viewer end-to-end in a real browser |
+| REST routes via FastAPI `TestClient`, including 401/403 paths | Full browser sign-in against a live server (UI rendering checked in headless Chrome with API fixtures) |
 | Alembic `0001 → 0002 → 0003` on SQLite; `compileall`; `node --check` | Backup restore, concurrency / load testing |
 
 There is currently **no automated test suite committed to the repository** — the checks above were run as local scripts. Adding `pytest` coverage is one of the most valuable contributions (see [Roadmap](#roadmap-and-known-limitations)).
@@ -84,7 +84,7 @@ The source is published at [github.com/mohui1999/AllMemoryMCP](https://github.co
 - **Provenance and ownership:** every result includes `owner_agent_id`; only the uploader can update or soft-delete a memory; all writes produce audit records.
 - **Append-only negotiation:** `direct` threads (creator + named recipients) and tenant-wide `global` threads, with creator-controlled `resolved` / `closed` status.
 - **Managed credentials:** issue tokens at runtime with `read` / `write` scopes, optional expiry, revocation and rotation. Only SHA-256 hashes are stored; raw tokens appear once.
-- **Read-only browser viewer:** search, source-agent filtering, pagination, detail view; login requires a managed read-only credential.
+- **Read-only browser viewer:** memory search, source-agent and type filters, pagination, detail panel with copyable IDs, negotiation timelines, stat overview, light/dark themes and a responsive layout; login requires a managed read-only credential.
 - **Pluggable storage:** SQLite for local / single-host use; PostgreSQL with optional pgvector semantic search via `DATABASE_URL`.
 - **Batteries-included deployment:** Dockerfile, Compose, Supervisor, nginx / Caddy examples, and a backup script.
 
@@ -311,7 +311,9 @@ Tool schemas never accept credentials as arguments; identity always comes from t
 
 The viewer at `/` accepts a username and a **database-managed credential with `read` scope only**. The username must match the credential's `agent_id`. The viewer rejects static environment tokens, credentials carrying `write` or `admin` scope, and admin tokens. The browser keeps the credential in memory only — refreshing or closing the page signs the user out, and revocation takes effect on the next request.
 
-The browser viewer UI is in English; localization into other languages is future work.
+The viewer has three workspaces: **Memories** (search, source-agent and type filters, pagination, and a detail panel with full metadata), **Discussions** (direct and global threads with an append-only message timeline), and **About** (a short map of the access model). Stat cards are computed from the results currently loaded, the theme follows the system preference and can be toggled, and the sidebar becomes a bottom navigation bar on narrow screens. Every displayed value comes from the API.
+
+The browser viewer UI is in English; localization into other languages is future work. The static assets have no build step and no external dependencies — `web/index.html`, `web/app.js` and `web/style.css` are served directly.
 
 Set an admin token in `.env`:
 
@@ -399,7 +401,7 @@ The highest-impact contribution right now is a committed `pytest` suite covering
 These are candidates, not commitments or scheduled releases:
 
 - **Not implemented:** OAuth/OIDC login, persistent user sessions, write-capable browser UI, tenant provisioning UI, credential self-service, role management, cross-tenant sharing.
-- **Needs real-world verification:** PostgreSQL + pgvector, OpenAI embeddings, MCP handshake over Streamable HTTP and stdio, browser end-to-end, backup restore, concurrency / load testing.
+- **Needs real-world verification:** PostgreSQL + pgvector, OpenAI embeddings, MCP handshake over Streamable HTTP and stdio, the full browser sign-in flow against a live server, backup restore, concurrency / load testing.
 - **Hardening:** committed `pytest` suite and CI, write idempotency, message pagination, semantic reranking, credential rate limiting, automated restore checks.
 - **Experience:** browser viewer localization beyond English.
 - **Ecosystem:** an official MCP client configuration example for each major agent, and keeping the translated READMEs in sync with this one.
