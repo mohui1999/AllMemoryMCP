@@ -146,6 +146,14 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get("/v1/whoami")
+def whoami(principal: Principal = Depends(current_principal)) -> dict:
+    """Return the identity behind this token. Use it to check that every Agent
+    has its own credential instead of sharing one identity."""
+    return {"tenant_id": principal.tenant_id, "agent_id": principal.agent_id,
+            "scopes": list(principal.scopes)}
+
+
 @app.get("/v1/memories")
 def memories(q: str = "", limit: int = Query(default=20, ge=1, le=100),
              owner_agent_id: str | None = None,

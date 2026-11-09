@@ -25,10 +25,11 @@ mcp = FastMCP("AllMemoryMCP", host=os.getenv("MCP_HOST", "0.0.0.0"),
     "memory. Memory results identify their source Agent. Negotiation messages are "
     "append-only and never directly modify memories. Use the summary layer for a "
     "compact Agent overview, timeline for dated append-only events, and event for "
-    "versioned knowledge grouped by category and event key. Start a session with "
-    "memory_context to load all three layers at once. Typical event categories: "
-    "development, finance, health. Pass expected_version when updating a summary "
-    "or event memory."
+    "versioned knowledge grouped by category and event key. Each Agent must connect "
+    "with its own token: call memory_whoami first to confirm which identity this "
+    "connection is using, then memory_context to load all three layers at once. "
+    "Typical event categories: development, finance, health. Pass expected_version "
+    "when updating a summary or event memory."
 ))
 
 # Holds the authenticated Principal for the current HTTP request (remote transport).
@@ -74,6 +75,19 @@ class AgentAuthMiddleware:
             await self.app(scope, receive, send)
         finally:
             _request_agent.reset(reset)
+
+
+@mcp.tool()
+def memory_whoami() -> dict:
+    """Return the identity (tenant, Agent id, scopes) behind this connection.
+
+    Call this at the start of every session. If two Agents report the same
+    agent_id, they are sharing one token and memory ownership will be wrong.
+    Ask an administrator for a separate credential for each Agent.
+    """
+    principal = caller()
+    return {"tenant_id": principal.tenant_id, "agent_id": principal.agent_id,
+            "scopes": list(principal.scopes)}
 
 
 @mcp.tool()

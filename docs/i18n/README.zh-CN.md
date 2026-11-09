@@ -230,10 +230,25 @@ nginx 子路径部署用 `https://<你的域名>/allmemory/mcp`。
 
 每个 Agent 使用独立凭证。**绝不要把 token 放进工具参数、提示词、源码或共享的 Agent 配置里。** 有些 MCP 客户端无法自定义请求头，这类客户端请用下面的 stdio 桥接（兼容的 OAuth 流程尚未实现）。
 
+### 为每个 Agent 单独签发凭证
+
+`.env` 里的静态 `AGENT_TOKENS` 适合最初试跑，但**多个 Agent 共用一个 token 就会变成同一个身份**：所有记忆的 `owner_agent_id` 都相同，「只有上传者可修改」也失去意义。正式多 Agent 使用请为每个 Agent 签发独立的托管凭证（库里只存 SHA-256，可撤销 / 轮换，无需重启服务）：
+
+```sh
+curl -X POST https://<你的域名>/v1/admin/credentials \
+  -H 'Authorization: Bearer <admin-token>' -H 'Content-Type: application/json' \
+  -d '{"tenant_id":"default","agent_id":"claude-code","scopes":["read","write"]}'
+```
+
+响应里的明文 token **只出现一次**，只写进该 Agent 自己的 MCP 配置；换一个 `agent_id` 重复调用即可给下一个 Agent 签发。`GET /v1/admin/credentials` 只列举凭证（不含 token），revoke / rotate 端点负责生命周期。
+
+连上之后，先在每个 Agent 里调用 `memory_whoami`（或 `GET /v1/whoami`）确认各自看到不同的 `agent_id`；如果两个 Agent 返回同一个 id，说明它们仍在共用一个 token。
+
 ### 可复制给 Agent 的指令
 
 ```text
 使用 AllMemoryMCP 管理共享记忆。
+- 先调用 memory_whoami 记住自己的 agent_id，它由你的 token 决定。
 - 写入前先调用 memory_search，尽量避免重复记忆。
 - 总结搜索结果时保留 owner_agent_id 来源信息。
 - 使用 memory_write 新增记忆；只能更新或删除自己上传的记忆。
@@ -299,6 +314,7 @@ curl -X POST http://127.0.0.1:8099/v1/negotiations \
 | `GET`, `PUT` | `/v1/event-memories` | 搜索或创建 / 更新带版本的类别事件记忆 |
 | `PATCH` | `/v1/event-memories/{memory_id}` | 传入 `expected_version` 更新自己拥有的事件记忆 |
 | `GET` | `/v1/memories/{memory_id}/revisions` | 读取概要 / 事件记忆的版本快照 |
+| `GET` | `/v1/whoami` | 返回当前 token 对应的身份（租户、Agent id、scopes） |
 | `GET` | `/v1/categories` | 列出在用类别及事件 / 时间记忆数量 |
 | `GET` | `/v1/memory-context` | 一次取回某 Agent 的概要、时间记忆、事件记忆和类别 |
 | `GET`, `POST` | `/v1/negotiations` | 列举可见线程、发起线程 |
@@ -350,6 +366,7 @@ curl -X POST 'http://127.0.0.1:8099/v1/admin/reindex?batch_size=200' \
 |---|---|
 | `memory_search` | 搜索租户内可见记忆，返回上传者信息 |
 | `memory_get` | 按 ID 读取记忆 |
+| `memory_whoami` | 确认当前连接使用的 `agent_id`、租户与 scopes |
 | `memory_write` | 创建一条归属当前 Agent 的记忆 |
 | `memory_update` | 只更新当前 Agent 上传的记忆 |
 | `memory_delete` | 只软删除当前 Agent 上传的记忆 |

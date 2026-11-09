@@ -245,12 +245,27 @@ For the nginx subpath setup use `https://<your-domain>/allmemory/mcp`.
 
 Give each agent a separate credential. **Never put the token in a tool argument, prompt, source file, or shared agent configuration.** Some MCP clients cannot set custom HTTP headers; use the local stdio bridge below (or a compatible OAuth flow, which is not implemented yet) for those clients.
 
+### Issue one credential per agent
+
+Static `AGENT_TOKENS` in `.env` are fine for a first test, but **every Agent that shares a token becomes the same identity**: all memories are attributed to one `owner_agent_id` and the "only the uploader may edit" rule stops protecting anything. For real multi-agent use, issue a separate managed credential per Agent. Only its SHA-256 hash is stored, and it can be revoked or rotated without restarting the service:
+
+```sh
+curl -X POST https://<your-domain>/v1/admin/credentials \
+  -H 'Authorization: Bearer <admin-token>' -H 'Content-Type: application/json' \
+  -d '{"tenant_id":"default","agent_id":"claude-code","scopes":["read","write"]}'
+```
+
+The response contains the raw token **once**; put it only in that Agent's MCP configuration. Repeat with a different `agent_id` for every Agent. `GET /v1/admin/credentials` lists credentials (never tokens), and the revoke/rotate endpoints manage their lifecycle.
+
+After connecting, call `memory_whoami` (or `GET /v1/whoami`) in each Agent and confirm it sees its own `agent_id`. If two Agents report the same id, they are sharing one token.
+
 ### Reusable agent instructions
 
 After connecting, give the agent this operational guidance:
 
 ```text
 Use AllMemoryMCP for shared memory.
+- First call memory_whoami and remember your own agent_id; it comes from your token.
 - Search with memory_search before creating a duplicate.
 - Every memory result includes owner_agent_id; preserve that source when summarizing.
 - Use memory_write to add a memory. You may update or delete only memories you uploaded.
@@ -316,6 +331,7 @@ Route summary (all `/v1/*` routes require a Bearer token):
 | `GET`, `PUT` | `/v1/event-memories` | Search or upsert a versioned category/event memory |
 | `PATCH` | `/v1/event-memories/{memory_id}` | Update an owned event memory with `expected_version` |
 | `GET` | `/v1/memories/{memory_id}/revisions` | Read summary/event revision snapshots |
+| `GET` | `/v1/whoami` | Return the identity (tenant, Agent id, scopes) behind this token |
 | `GET` | `/v1/categories` | List categories in use, with event/timeline counts |
 | `GET` | `/v1/memory-context` | Load an Agent's summary, timeline, event memories and categories at once |
 | `GET`, `POST` | `/v1/negotiations` | List visible threads or start a thread |
@@ -368,6 +384,7 @@ curl -X POST 'http://127.0.0.1:8099/v1/admin/reindex?batch_size=200' \
 |---|---|
 | `memory_search` | Search tenant-visible memories and return uploader metadata |
 | `memory_get` | Read a memory by ID |
+| `memory_whoami` | Confirm which `agent_id` / tenant / scopes this connection uses |
 | `memory_write` | Create a memory owned by the calling agent |
 | `memory_update` | Update only the calling agent's memory |
 | `memory_delete` | Soft-delete only the calling agent's memory |
