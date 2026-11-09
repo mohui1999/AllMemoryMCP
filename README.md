@@ -408,8 +408,7 @@ The highest-impact contribution right now is a committed `pytest` suite covering
 
 These are candidates, not commitments or scheduled releases:
 
-- **Planned:** Multi-user team and private memory spaces with explicit space-level access, user invitations and roles, per-space Agent grants, a scoped administration area, explicit publishing from personal to team spaces, and a safe migration of existing data into `legacy_shared` spaces.
-- **Not implemented:** OAuth/OIDC login, persistent user sessions, write-capable browser UI, tenant provisioning UI, credential self-service, cross-tenant sharing.
+- **Not implemented:** OAuth/OIDC login, persistent user sessions, write-capable browser UI, tenant provisioning UI, credential self-service, role management, cross-tenant sharing.
 - **Needs real-world verification:** PostgreSQL + pgvector, OpenAI embeddings, MCP handshake over Streamable HTTP and stdio, the full browser sign-in flow against a live server, backup restore, concurrency / load testing.
 - **Hardening:** committed `pytest` suite and CI, write idempotency, message pagination, semantic reranking, credential rate limiting, automated restore checks.
 - **Experience:** browser viewer localization beyond English.
