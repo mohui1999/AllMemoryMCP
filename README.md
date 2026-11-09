@@ -51,15 +51,15 @@ Runtime modules stay at the project root because the documented local and contai
 
 ## Project status
 
-**Pre-1.0 / experimental** (API version `0.4.0`, November 2026). The three memory layers, offline vector retrieval, context assembly and reindexing are covered by scripted SQLite checks. PostgreSQL + pgvector, remote embedding providers and a live MCP handshake remain untested. Please read this before deploying to production.
+**Pre-1.0 / experimental** (API version `0.4.0`, November 2026). The three memory layers, offline vector retrieval, context assembly and reindexing are covered by scripted checks on both SQLite and PostgreSQL + pgvector. A live MCP handshake over Streamable HTTP has also been exercised. Remote embedding providers, backup restore and concurrency testing remain unverified. Please read this before deploying to production.
 
 | Verified by execution (2026-11-09) | Not yet exercised |
 |---|---|
-| Legacy memory CRUD, ownership rejection, soft deletion, audit records | PostgreSQL backend and the pgvector / HNSW SQL path |
-| Summary / timeline / event writes, optimistic locking, revisions, supersedes and time filters | OpenAI / OpenAI-compatible embedding calls (code path only) |
-| Offline vector retrieval on SQLite: sparse chunk vectors, RRF fusion, version-aware filtering, reindex | MCP handshake over Streamable HTTP and stdio |
-| `memory_context` / categories / REST 401, 403, 404, 409, 422; two-tenant isolation | Full browser sign-in against a live server (UI rendering checked in headless Chrome with API fixtures) |
-| Alembic `0001 → 0002 → 0003 → 0004` on SQLite; `compileall`; `node --check` | Backup restore, concurrency / load testing |
+| Legacy memory CRUD, ownership rejection, soft deletion, audit records | OpenAI / OpenAI-compatible embedding calls (code path only) |
+| Summary / timeline / event writes, optimistic locking, revisions, supersedes and time filters | MCP stdio handshake and full browser sign-in against a live server |
+| Offline vector retrieval on SQLite: sparse chunk vectors, RRF fusion, version-aware filtering, reindex | Backup restore, concurrency / load testing |
+| PostgreSQL 16 + pgvector: Alembic `0001 → 0004`, the `vector` extension, HNSW cosine indexes, `Index Scan` on `<=>` ordering, `vector(1536)` chunk vectors, reindex | |
+| `memory_context`, categories, REST 401/403/404/409/422, two-tenant isolation, MCP `initialize` over Streamable HTTP; Alembic on SQLite, `compileall`, `node --check` | |
 
 There is currently **no automated test suite committed to the repository** — the checks above were run as local scripts. Adding `pytest` coverage is one of the most valuable contributions (see [Roadmap](#roadmap-and-known-limitations)).
 
