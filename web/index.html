@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#f6f7fb">
   <meta name="description" content="A unified console for the shared, tenant-isolated memory of your AI agents: browse, delete and manage agent credentials.">
   <title>AllMemory — Shared agent memory</title>
-  <link rel="stylesheet" href="assets/style.css?v=0.6.1">
+  <link rel="stylesheet" href="assets/style.css?v=0.6.2">
   <script>
     (function () {
       try {
@@ -55,8 +55,18 @@
 
 <div class="bg-decor" aria-hidden="true"><span class="glow glow-a"></span><span class="glow glow-b"></span><span class="bg-grid"></span></div>
 
+<!-- ──────────────────────── Boot screen ──────────────────────── -->
+<div id="boot-screen" class="boot-screen" role="status" aria-live="polite">
+  <div class="boot-inner">
+    <span class="boot-logo"><svg class="icon"><use href="#i-logo"></use></svg></span>
+    <span class="boot-name">AllMemory<span class="brand-thin"> / console</span></span>
+    <span class="boot-spinner" aria-hidden="true"></span>
+    <span class="boot-text">Restoring your session…</span>
+  </div>
+</div>
+
 <!-- ───────────────────────── Sign in ───────────────────────── -->
-<section id="login-view" class="login-scene">
+<section id="login-view" class="login-scene" hidden>
   <header class="login-top">
     <a class="brand" href="/" aria-label="AllMemory home">
       <span class="brand-mark"><svg class="icon"><use href="#i-logo"></use></svg></span>
@@ -333,6 +343,6 @@
 </div>
 
 <div id="toast-stack" class="toast-stack" aria-live="polite"></div>
-<script src="assets/app.js?v=0.6.1" defer></script>
+<script src="assets/app.js?v=0.6.2" defer></script>
 </body>
 </html>

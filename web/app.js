@@ -175,14 +175,23 @@
     $("side-access").textContent = "administrator";
     $("side-foot").replaceChildren(
       el("span", "pulse-dot"),
-      document.createTextNode(" v0.6.0 · full access")
+      document.createTextNode(" v0.6.2 · full access")
     );
+  }
+
+  function showLogin() {
+    // Used for the initial sign-in screen and after a session ends.
+    $("boot-screen").hidden = true;
+    $("app-view").hidden = true;
+    $("login-view").hidden = false;
+    sessionChrome();
   }
 
   function showViewer(data) {
     state.signedIn = true;
     state.username = data.username;
     state.tenantId = data.tenant_id === "*" ? "all tenants" : (data.tenant_id || "default");
+    $("boot-screen").hidden = true;
     $("login-view").hidden = true;
     $("app-view").hidden = false;
     $("current-user").textContent = state.username;
@@ -201,15 +210,18 @@
   }
 
   async function restoreSession() {
-    // A refresh must not ask for the token again. This is a plain fetch so a
-    // missing/expired session stays silent instead of showing a login error.
+    // On refresh the boot screen is shown first; whichever branch wins hides
+    // it and reveals either the console or the sign-in form — no login flash.
     try {
       const response = await fetch("viewer/session", {
         credentials: "same-origin", cache: "no-store",
       });
-      if (!response.ok) return;
-      await enterConsole(await response.json());
-    } catch (error) { /* stay on the sign-in screen */ }
+      if (response.ok) {
+        await enterConsole(await response.json());
+        return;
+      }
+    } catch (error) { /* fall through to the sign-in screen */ }
+    showLogin();
   }
 
   async function logout(showLoginError = false) {
@@ -231,8 +243,7 @@
     state.typeFilter = null;
     state.page = 0;
     state.threadLoaded = false;
-    $("app-view").hidden = true;
-    $("login-view").hidden = false;
+    showLogin();
     $("credential").value = "";
     $("memory-list").replaceChildren();
     $("detail-panel").replaceChildren();

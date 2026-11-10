@@ -118,6 +118,35 @@ code, kbd { font-family: var(--mono); }
 }
 .login-scene, .app-shell { position: relative; z-index: 1; }
 
+/* Boot screen ------------------------------------------------------------ */
+.boot-screen {
+  position: fixed; inset: 0; z-index: 50;
+  display: grid; place-items: center;
+  background: var(--bg, #0f1117);
+  color: var(--ink, #e8eaf2);
+}
+.boot-inner { display: flex; flex-direction: column; align-items: center; gap: 14px; }
+.boot-logo {
+  width: 54px; height: 54px; border-radius: 16px; display: grid; place-items: center;
+  color: #fff; font-size: 26px;
+  background: linear-gradient(145deg, #a294ff, #6754e6 60%, #4f3fd0);
+  box-shadow: 0 10px 26px rgba(103, 84, 230, .36), inset 0 1px 0 rgba(255,255,255,.3);
+  animation: bootPulse 1.8s var(--ease, ease) infinite;
+}
+.boot-logo .icon { width: 28px; height: 28px; }
+.boot-name { font-weight: 700; letter-spacing: -.35px; font-size: 17px; }
+.boot-spinner {
+  width: 26px; height: 26px; margin-top: 4px; border-radius: 50%;
+  border: 3px solid rgba(124, 108, 240, .25); border-top-color: #7c6cf0;
+  animation: bootSpin .8s linear infinite;
+}
+.boot-text { font-size: 13px; opacity: .72; letter-spacing: .2px; }
+@keyframes bootSpin { to { transform: rotate(360deg); } }
+@keyframes bootPulse { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.06); } }
+@media (prefers-reduced-motion: reduce) {
+  .boot-spinner, .boot-logo { animation: none; }
+}
+
 /* Shared bits ------------------------------------------------------------ */
 .brand { display: inline-flex; align-items: center; gap: 11px; text-decoration: none; color: var(--ink); font-weight: 700; letter-spacing: -.35px; font-size: 16px; }
 .brand-mark {
