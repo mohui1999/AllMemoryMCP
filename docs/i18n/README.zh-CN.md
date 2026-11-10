@@ -8,7 +8,7 @@
 
 **面向 AI Agent 的多租户共享记忆服务。**
 
-AllMemoryMCP 让多个 Agent 把各自学到的东西写进同一个地方。每条记忆都保留上传者标识，因此读取共享事实时能知道**是哪个 Agent 贡献的**，而且只有上传者本人可以修改或撤回。Agent 还可以在只追加的协商线程里讨论分歧，讨论本身不会悄悄改写共享记忆。人类用户可通过网页查看同一份记忆空间，管理员还能在管理后台签发和管理各 Agent 的凭证。
+AllMemoryMCP 让多个 Agent 把各自学到的东西写进同一个地方。每条记忆都保留上传者标识，因此读取共享事实时能知道**是哪个 Agent 贡献的**，而且只有上传者本人可以修改或撤回。Agent 还可以在只追加的协商线程里讨论分歧，讨论本身不会悄悄改写共享记忆。人类用户可通过单一网页控制台查看同一份记忆空间、删除记录并管理各 Agent 的凭证，登录状态在刷新后依然保留。
 
 ### 复制给你的 AGENT
 
@@ -36,17 +36,18 @@ AllMemoryMCP 是一个可自托管的小型服务，围绕三条规则构建：
 
 ## 项目状态
 
-**Pre-1.0 / 实验阶段**（API 版本 `0.5.0`，2026 年 11 月）。三类记忆、离线向量检索、上下文聚合与向量重建在 SQLite 与 PostgreSQL + pgvector 两条路径上均有脚本化验证，Streamable HTTP 的真实 MCP 握手也已跑通；管理后台的登录与凭证生命周期在本地服务的无头 Chrome 中实测通过。远端嵌入服务、备份恢复与并发测试仍未实跑。上生产前请先读这一节。
+**Pre-1.0 / 实验阶段**（API 版本 `0.6.0`，2026 年 11 月）。三类记忆、离线向量检索、上下文聚合与向量重建在 SQLite 与 PostgreSQL + pgvector 两条路径上均有脚本化验证，Streamable HTTP 的真实 MCP 握手也已跑通；统一网页控制台（Cookie 会话、CSRF 防护、凭证生命周期、记忆删除）在本地服务上有脚本化验证。远端嵌入服务、备份恢复与并发测试仍未实跑。上生产前请先读这一节。
 
 | 已实跑验证（2026-11-09） | 尚未实跑 |
 |---|---|
 | 旧版记忆增删改查、越权拒绝、软删除、审计记录 | OpenAI / 兼容接口的嵌入调用（仅代码层验证） |
-| 概要 / 时间记忆 / 事件记忆写入、乐观锁、版本快照、纠错与时间筛选 | MCP stdio 握手、真实线上部署的管理后台登录 |
-| 管理后台：角色化登录、签发 / 列表 / 撤销 / 轮换 / 删除、scope 校验、一次性 token 与 MCP 配置渲染 | 备份恢复、并发与压力测试 |
+| 概要 / 时间记忆 / 事件记忆写入、乐观锁、版本快照、纠错与时间筛选 | MCP stdio 握手、真实线上部署的会话恢复 |
+| 统一控制台：单一管理员账户、HttpOnly Cookie 会话、刷新恢复、CSRF 防护、凭证签发 / 列表 / 撤销 / 轮换 / 删除、管理员删除记忆 | 备份恢复、并发与压力测试 |
 | SQLite 离线向量检索：稀疏分块向量、RRF 融合、版本过滤、重建 | |
 | PostgreSQL 16 + pgvector：Alembic `0001 → 0004`、`vector` 扩展、HNSW 余弦索引、`<=>` 排序走 `Index Scan`、`vector(1536)` 分块向量、重建 | |
 | `memory_context`、类别枚举、REST 401/403/404/409/422、双租户隔离、Streamable HTTP 的 MCP `initialize`；SQLite 迁移链、`compileall`、`node --check` | |
 | `0.5.0`：`memory_guide`、`memory_agents` / `/v1/agents`、概要置顶与加权、唯一概要免版本号替换、`detail_level` 上下文；SQLite 脚本化验证 | |
+| `0.6.0`：统一管理员账户、HttpOnly Cookie 会话与刷新恢复、CSRF 防护、控制台删除任意记忆、网页全视图开放；52 项会话回归 | |
 
 仓库里**目前没有随代码提交的自动化测试套件**——上述检查是本地临时脚本。补一套 `pytest` 是当前最有价值的贡献（见[路线图](#路线图与已知限制)）。
 
@@ -64,7 +65,7 @@ AllMemoryMCP 是一个可自托管的小型服务，围绕三条规则构建：
 - [Agent 接入](#agent-接入)
 - [REST API](#rest-api)
 - [MCP 工具](#mcp-工具)
-- [浏览网页与管理后台](#浏览网页与管理后台)
+- [网页控制台](#网页控制台)
 - [配置](#配置)
 - [存储与语义检索](#存储与语义检索)
 - [贡献指南](#贡献指南)
@@ -85,8 +86,8 @@ AllMemoryMCP 是一个可自托管的小型服务，围绕三条规则构建：
 - **一次取回全貌**：`memory_context` 返回概要、类别、计数和可直接照抄的后续调用；`detail_level=summary` 只取概要，`detail_level=full` 才附带时间线与事件行。
 - **只追加的协商**：`direct` 线程（创建者 + 指定接收者）与租户内 `global` 线程，创建者可置为 `resolved` / `closed`。
 - **托管凭证**：运行时签发带 `read` / `write` scope 的 token，支持过期、撤销、轮换；库里只存 SHA-256，明文仅出现一次。
-- **浏览网页**：记忆搜索、来源与类型筛选、分页、可复制 ID 的详情面板、协商时间线、统计概览、明暗主题与响应式布局；登录必须使用托管只读凭证。
-- **管理后台**：用 admin token 登录后，可签发、列出、撤销、轮换或删除各 Agent 的凭证，并一键复制可直接粘贴的 MCP 配置；明文 token 只出现一次，浏览器不做持久化。
+- **统一网页控制台**：一个管理员凭证打开全部工作区——记忆搜索与筛选、讨论时间线、删除任意记忆、签发 / 撤销 / 轮换 / 删除 Agent 凭证。登录状态保存在 HttpOnly `SameSite=Lax` Cookie 中，刷新页面无需重新输入凭证。
+- **会话 CSRF 防护**：网页写操作必须带 `X-AllMemory-Web: 1` 且 `Origin` 匹配；Bearer 客户端（Agent / MCP）不受影响。
 - **可切换存储**：本地 / 单机用 SQLite（已包含向量检索），改 `DATABASE_URL` 即可用 PostgreSQL，并可选 pgvector / HNSW 语义检索。
 - **开箱即部署**：Dockerfile、Compose、Supervisor、nginx / Caddy 示例和备份脚本。
 
@@ -137,8 +138,7 @@ flowchart LR
   A[AI Agents] -->|REST / Bearer| R[FastAPI REST + 网页 :8099]
   A -->|MCP / Bearer| M[Streamable HTTP MCP :8001]
   A -->|stdio| S[本地 MCP 桥接]
-  U[人类浏览器] -->|只读凭证| R
-  O[运维浏览器] -->|admin token| R
+  U[人类浏览器] -->|admin token → HttpOnly 会话 Cookie| R
   R --> C[共享服务层<br/>租户 + scope + 所有权]
   M --> C
   S --> C
@@ -154,14 +154,14 @@ REST、MCP 和网页调用同一套服务层与同一个数据库，不存在第
 | 记忆（Memory） | 带 `memory_type`、`tags`、`version`、时间戳和 `owner_agent_id` 的文本记录；删除为软删除（`deleted_at`）。 |
 | 结构化记忆 | 概要、时间记忆或事件记忆；概要 / 事件记忆保留版本快照，时间线纠错会标记被替代的事件。 |
 | 协商（Negotiation） | `direct` 或 `global` 线程，内含只追加消息；关闭线程不会修改记忆。 |
-| 权限（Scope） | `read` 或 `write`。静态 token 默认两者都有；托管凭证显式声明。 |
+| 权限（Scope） | Agent 用 `read` / `write`：静态 token 默认两者都有，托管凭证显式声明。网页控制台会话额外持有 `admin`，该 scope 永不签发给 Agent 凭证。 |
 
 ## 什么时候不该用
 
 把边界写清楚，能省下评估时间：
 
 - **不是通用 RAG / 向量数据库。** 默认离线向量是词汇 / 字符级近似，不是深度语义模型；要真语义需配置 OpenAI 兼容的嵌入服务。
-- **不是用户账户系统。** 网页登录是 Bearer token 流程：查看用托管只读凭证，管理后台用静态 admin token；没有密码、持久会话、自助注册，也没有 OAuth/OIDC。
+- **不是用户账户系统。** 网页只有一种账户：`ADMIN_TOKENS` 静态凭证，在 `/viewer/login` 换取 HttpOnly Cookie 会话；没有密码、按用户分的角色、自助注册，也没有 OAuth/OIDC。Agent 凭证仅供 MCP / REST 客户端使用，不能登录网页。
 - **不是通用内容版本管理系统。** 概要 / 事件记忆保留快照，时间线纠错保留被替代事件；旧版记忆编辑不保存内容快照。
 - **不是高并发存储。** 默认 SQLite 面向单机小规模部署；没有限流、写入幂等或消息分页。
 - **不是开箱即用的多组织 SaaS。** 租户能隔离数据，但没有租户开通界面、成员模型或按租户委派管理员。
@@ -373,8 +373,12 @@ curl -X POST http://127.0.0.1:8099/v1/negotiations \
 | `POST` | `/v1/admin/credentials/{id}/rotate` | 轮换托管凭证 |
 | `DELETE` | `/v1/admin/credentials/{id}` | 删除凭证记录，记忆保留（需 admin token） |
 | `POST` | `/v1/admin/reindex` | 重建缺失 / 失败的向量分块（需 admin token） |
+| `DELETE` | `/v1/admin/memories/{id}` | 控制台软删除任意记忆并记录原属主；Agent 客户端仍受「只有上传者可删」约束 |
+| `POST` | `/viewer/login` | 用管理员凭证换取 HttpOnly 会话 Cookie |
+| `GET` | `/viewer/session` | 刷新后恢复控制台身份 |
+| `POST` | `/viewer/logout` | 清除会话 Cookie |
 
-`GET /v1/...` 需要 `read` scope，所有写操作需要 `write`；缺少 scope 返回 `403`。FastAPI 还提供 `/docs` 与 `/openapi.json`。
+`GET /v1/...` 需要 `read` scope，记忆写操作需要 `write`，`/v1/admin/...` 需要 `admin`；缺少 scope 返回 `403`。由会话 Cookie 鉴权的网页写操作还必须带 `X-AllMemory-Web: 1` 且 `Origin`（若存在）与当前主机一致；Bearer 客户端不受此限制。FastAPI 还提供 `/docs` 与 `/openapi.json`。
 
 结构化记忆调用示例：
 
@@ -442,15 +446,20 @@ curl -X POST 'http://127.0.0.1:8099/v1/admin/reindex?batch_size=200' \
 
 工具参数里不接受凭证；身份始终来自 Bearer 请求头（stdio 则来自进程绑定）。
 
-## 浏览网页与管理后台
+## 网页控制台
 
-`/` 页面接受两种身份：**数据库签发、且只有 `read` scope 的托管凭证**（用户名必须与凭证的 `agent_id` 一致），或 `ADMIN_TOKENS` 里的**静态 admin token**。登录响应告诉浏览器当前角色，token 只存在该标签页内存中，刷新或关闭即退出；撤销后下一次请求立即失效。静态 Agent token 与带 `write` / `admin` scope 的托管凭证会被拒绝。
+`/` 控制台只有**一种账户**：`ADMIN_TOKENS` 里的静态管理员凭证。`POST /viewer/login` 校验通过后，把凭证写入名为 `allmemory_session` 的 `HttpOnly`、`SameSite=Lax`、HTTPS 下带 `Secure` 的 Cookie；JavaScript 之后再也读不到该 token，登录响应只返回身份信息。页面每次加载都会调用 `GET /viewer/session` 恢复会话，**刷新不需要重新输入凭证**；`POST /viewer/logout` 清除 Cookie。默认有效期 30 天（`WEB_SESSION_TTL`）。Agent 凭证（包括只读凭证）不能登录网页。
 
-`viewer` 角色看到三个只读工作区：**记忆**（关键词 / 语义搜索、记忆层或类型筛选、来源筛选、分页、含完整元数据的详情面板）、**讨论**（定向与全局线程，附只追加的消息时间线）、**关于**（访问模型简述）。结构化记忆卡片会显示类别、事件键或事件时间。统计卡片基于当前已加载的结果计算；主题默认跟随系统并可手动切换；窄屏下侧栏会收成底部导航。界面展示的所有数值都来自 API。
+统一身份在 `WEB_ADMIN_TENANT` 指定的租户（默认 `default`）下持有 `read`、`write`、`admin` 三个 scope，因此同一个会话里所有工作区都可用：
 
-`admin` 角色则进入**管理后台**：列出凭证（可选显示已撤销）、按 `read` / `write` scope 与可选过期时间签发新凭证、展示**仅此一次**的明文 token 与根据当前页面地址生成的可直接粘贴 MCP 配置；同一列表里可以撤销（立即失效、保留记录）、轮换（更换 token）或删除（移除凭证记录）。这些操作都不会删除该 Agent 上传的记忆。admin token 不是 Agent token，因此该角色下记忆视图被隐藏；要浏览记忆请另开一个标签页用只读凭证登录。
+- **记忆**：关键词 / 语义搜索、记忆层或类型筛选、来源筛选、分页、含完整元数据的详情面板，以及**删除记忆**按钮。控制台删除是软删除：保留版本历史，并在审计记录里写明原属主；Agent 客户端仍只能通过 `DELETE /v1/memories/{id}` 删除自己上传的记忆。
+- **讨论**：定向与全局线程，附只追加的消息时间线。
+- **关于**：记忆分层与访问模型简述。
+- **管理后台**：列出凭证（可选显示已撤销）、按 `read` / `write` scope 与可选过期时间签发新凭证、展示**仅此一次**的明文 token 与根据当前页面地址生成的可直接粘贴 MCP 配置；同一列表里可以撤销（立即失效、保留记录）、轮换（更换 token）或删除（移除凭证记录）。这些操作都不会删除该 Agent 上传的记忆。
 
-**安全说明**：明文 token 只在页面上显示到被收起、退出登录或关闭标签页为止，不写入 `localStorage`、Cookie、日志或仓库。admin token 是根凭证，请只在可信设备上通过 HTTPS 使用，泄露后按运维流程轮换 `ADMIN_TOKENS`。
+结构化记忆卡片会显示类别、事件键或事件时间。统计卡片基于当前已加载的结果计算；主题默认跟随系统并可手动切换；窄屏下侧栏会收成底部导航。界面展示的所有数值都来自 API。
+
+**安全说明**：会话 Cookie 是 `HttpOnly`（JavaScript 无法读取）、`SameSite=Lax`，在 HTTPS 或 `WEB_COOKIE_SECURE=true` 时带 `Secure`。网页写操作还要求 `X-AllMemory-Web: 1` 请求头与匹配的 `Origin`，用于阻止跨站请求伪造，且不影响 Bearer 客户端。管理员凭证是根凭证，请只在可信设备上通过 HTTPS 使用；轮换 `ADMIN_TOKENS` 会让所有会话立即失效。新签发的 Agent token 只在页面上显示到被收起或退出登录为止，不写入 `localStorage`、日志或仓库。
 
 当前网页界面文案为英文，其他语言本地化尚未实现。静态资源没有构建步骤、不依赖外部资源——`web/index.html`、`web/app.js`、`web/style.css` 直接由服务托管。
 
@@ -458,18 +467,22 @@ curl -X POST 'http://127.0.0.1:8099/v1/admin/reindex?batch_size=200' \
 
 ```dotenv
 ADMIN_TOKENS={"memory-admin":"替换成随机管理员token"}
+# 可选会话参数：
+# WEB_SESSION_TTL=2592000
+# WEB_ADMIN_TENANT=default
+# WEB_COOKIE_SECURE=true
 ```
 
-由有权限的操作者为每个查看者签发只读凭证：
+Agent 凭证只给 MCP / REST 客户端使用。可在管理后台签发，或用：
 
 ```sh
 curl -X POST http://127.0.0.1:8099/v1/admin/credentials \
   -H 'Authorization: Bearer <admin-token>' \
   -H 'Content-Type: application/json' \
-  -d '{"tenant_id":"default","agent_id":"viewer-alice","scopes":["read"]}'
+  -d '{"tenant_id":"default","agent_id":"grokbot","scopes":["read","write"]}'
 ```
 
-把 `viewer-alice` 作为用户名、响应里的 `token` 作为登录凭证交给用户。明文 token **只返回一次**。用 `POST /v1/admin/credentials/<凭证ID>/revoke` 终止访问。也可以直接用同一个 admin token 登录 `/`，在管理后台里签发或撤销只读凭证。
+明文 token **只返回一次**；用 `POST /v1/admin/credentials/<凭证ID>/revoke` 终止该 Agent 的访问。
 
 ## 配置
 
@@ -478,7 +491,10 @@ curl -X POST http://127.0.0.1:8099/v1/admin/credentials \
 | `DATABASE_URL` | SQLAlchemy 数据库 URL | `sqlite:///./data/memory.db` |
 | `DATABASE_PATH` | 旧版 SQLite 路径 / 容器内数据路径 | `./data/memory.db` |
 | `AGENT_TOKENS` | 静态 `{租户: {Agent: token}}` 映射 | `{}` |
-| `ADMIN_TOKENS` | 凭证管理端点与网页管理后台登录用的 `{管理员名: token}` 映射 | `{}` |
+| `ADMIN_TOKENS` | 统一网页控制台与 `/v1/admin/...` 使用的 `{管理员名: token}` 映射 | `{}` |
+| `WEB_SESSION_TTL` | 网页会话 Cookie 有效期（秒） | `2592000`（30 天） |
+| `WEB_ADMIN_TENANT` | 控制台浏览的租户 | `default` |
+| `WEB_COOKIE_SECURE` | `auto` / `true` / `false`；HTTPS 反代后强制 `Secure` | `auto` |
 | `MCP_HOST` / `MCP_PORT` | 远程 MCP 监听地址与端口 | `0.0.0.0` / `8001` |
 | `MCP_TRANSPORT` | `streamable-http` 或 `stdio` | `streamable-http` |
 | `MCP_AGENT_ID` | 本地 stdio 进程绑定的 Agent 身份 | 未设置 |
@@ -542,9 +558,9 @@ uvicorn app:app --host 127.0.0.1 --port 8099
 
 以下是候选方向，不是承诺，也没有排期：
 
-- **尚未实现**：OAuth/OIDC 登录、持久用户会话、可写入的网页界面、租户开通界面、凭证自助申请、角色管理、跨租户共享。
-- **需真实环境验证**：PostgreSQL + pgvector、OpenAI embeddings、Streamable HTTP / stdio 的 MCP 握手、真实服务上的完整网页登录流程、备份恢复、并发与压力测试。
-- **加固**：随仓库提交的 `pytest` 套件与 CI、写入幂等、消息分页、语义重排、凭证限流、自动恢复校验。
+- **尚未实现**：OAuth/OIDC 登录、按用户分的账户与角色管理、租户开通界面、凭证自助申请、控制台跨租户浏览、会话撤销界面。
+- **需真实环境验证**：OpenAI embeddings、MCP stdio 握手、真实浏览器中对线上部署的完整登录流程、备份恢复、并发与压力测试。
+- **加固**：随仓库提交的 `pytest` 套件与 CI、登录限流、写入幂等、消息分页、语义重排、自动恢复校验。
 - **体验**：网页界面除英文外的本地化。
 - **生态**：为主流 Agent 提供官方 MCP 客户端配置示例，并让各语言 README 与本文件保持同步。
 
@@ -553,8 +569,8 @@ uvicorn app:app --host 127.0.0.1 --port 8099
 ## 安全
 
 - 非本机访问一律走 HTTPS，8099/8001 绑定 `127.0.0.1` 并置于反向代理之后。
-- 每个 Agent、每个租户使用独立高熵凭证；给人类查看者签发 `read`-only 凭证，绝不把可写 token 交给查看者。
-- 静态 `AGENT_TOKENS` / `ADMIN_TOKENS` 存于环境变量；托管凭证记录只存 SHA-256，并支持过期、撤销、轮换。
+- 每个 Agent、每个租户使用独立高熵凭证；网页访问只用一个 `ADMIN_TOKENS` 凭证（HttpOnly Cookie 会话），绝不把它复用为 Agent token 或写进 MCP 配置。
+- 静态 `AGENT_TOKENS` / `ADMIN_TOKENS` 存于环境变量；托管凭证记录只存 SHA-256，并支持过期、撤销、轮换。网页写操作有 CSRF 防护，Bearer 客户端不受影响。
 - 记忆内容属于不可信数据，Agent 消费时应视其可能过期或含提示注入。
 - **漏洞报告**：项目目前没有专用私密报告渠道。请勿在公开 issue 里贴利用细节；可先提一个不含细节的 issue 请求私密沟通方式（仓库发布后也可通过仓库联系维护者）。
 
@@ -562,10 +578,11 @@ uvicorn app:app --host 127.0.0.1 --port 8099
 
 | 现象 | 可能原因 |
 |---|---|
-| `401 Provide a valid Agent bearer token` | token 缺失、已撤销、已过期，或不在 `AGENT_TOKENS` / 托管凭证里。 |
-| `403 requires scope 'write'` | 凭证是只读的（查看者凭证常见）；Agent 需签发 read/write 凭证。 |
-| 网页登录返回 401 | 查看者登录要求用户名与 `agent_id` 完全一致、凭证为数据库签发且只有 `read`；`ADMIN_TOKENS` 里的 admin token 则用于登录管理后台。 |
-| 看不到管理后台 | 当前是用只读凭证登录的；退出后改用 admin token。管理员角色下记忆视图会被有意隐藏。 |
+| `401 Provide a valid Agent bearer token or sign in to the console` | Bearer token 缺失、已撤销、已过期，或没有有效的网页会话 Cookie。 |
+| `403 requires scope 'write'` | Agent 凭证是只读的；需要写入的 Agent 应签发 read/write 凭证。 |
+| `403 Browser session writes require the X-AllMemory-Web header` | 跨站表单或自定义脚本漏了 CSRF 请求头（或 `Origin` 不匹配）；请使用随仓库提供的控制台，Bearer 客户端不受此限制。 |
+| 网页登录返回 401 | 只接受 `ADMIN_TOKENS` 里的值；Agent 凭证（包括只读凭证）不能登录网页。 |
+| 刷新后又回到登录页 | Cookie 没被保存（例如明文 HTTP 下发了 `Secure`）、管理员凭证已轮换，或 `WEB_SESSION_TTL` 到期。检查 `POST /viewer/login` 的 `Set-Cookie` 并按需设置 `WEB_COOKIE_SECURE`。 |
 | 部署后网页仍是旧界面 | CDN 缓存了 `app.js` / `style.css`；更新 `web/index.html` 里的 `?v=` 后缀，或给网页响应加 `Cache-Control: no-store`。 |
 | 更新 / 删除返回 404 | 记忆属于别的 Agent 或别的租户；系统有意不暴露存在性。 |
 | MCP 客户端连不上 | 确认客户端会发送 `Authorization`；检查反代是否透传该请求头、SSE 是否关闭缓冲（nginx 用 `proxy_buffering off`）。 |

@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#f6f7fb">
   <meta name="description" content="A read-only browser for the shared, tenant-isolated memory of your AI agents.">
   <title>AllMemory — Shared agent memory</title>
-  <link rel="stylesheet" href="assets/style.css?v=0.5.0">
+  <link rel="stylesheet" href="assets/style.css?v=0.6.0">
   <script>
     (function () {
       try {
@@ -41,6 +41,7 @@
   <symbol id="i-user" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="3.5"/><path d="M5 20a7 7 0 0 1 14 0"/></symbol>
   <symbol id="i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="m5 12.5 4.5 4.5L19 7"/></symbol>
   <symbol id="i-close" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 6l12 12M18 6 6 18"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13h10l1-13M10 11v6M14 11v6"/></symbol>
   <symbol id="i-eye" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 12S6 6.5 12 6.5 21.5 12 21.5 12 18 17.5 12 17.5 2.5 12 2.5 12Z"/><circle cx="12" cy="12" r="2.6"/></symbol>
   <symbol id="i-eye-off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4l16 16M9.6 6.9A8.7 8.7 0 0 1 12 6.5c6 0 9.5 5.5 9.5 5.5a15 15 0 0 1-2.6 3M6.3 8.5A15.6 15.6 0 0 0 2.5 12S6 17.5 12 17.5c1 0 1.9-.2 2.7-.4"/><path d="M10.2 10.2a2.6 2.6 0 0 0 3.6 3.6"/></symbol>
   <symbol id="i-inbox" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5h16l1.5 9v4a1 1 0 0 1-1 1h-17a1 1 0 0 1-1-1v-4L4 5Z"/><path d="M2.5 14H8l1.3 2.2h5.4L16 14h5.5"/></symbol>
@@ -59,7 +60,7 @@
   <header class="login-top">
     <a class="brand" href="/" aria-label="AllMemory home">
       <span class="brand-mark"><svg class="icon"><use href="#i-logo"></use></svg></span>
-      <span class="brand-name">AllMemory<span class="brand-thin"> / viewer</span></span>
+      <span class="brand-name">AllMemory<span class="brand-thin"> / console</span></span>
     </a>
     <div class="login-top-actions">
       <span class="status-chip"><span class="pulse-dot"></span> <span id="service-status">Checking service…</span></span>
@@ -97,28 +98,25 @@
     <div class="login-card">
       <div class="login-card-head">
         <span class="access-icon"><svg class="icon"><use href="#i-shield"></use></svg></span>
-        <span class="access-badge" id="access-badge">READ-ONLY</span>
+        <span class="access-badge" id="access-badge">FULL ACCESS</span>
       </div>
       <h2>Welcome back</h2>
-      <p class="card-sub">Paste a read-only agent credential to browse memories, or an administrator token to manage agents and issue their MCP credentials.</p>
+      <p class="card-sub">One administrator account for the whole console: browse memories and discussions, delete records, and issue, rotate or remove agent credentials.</p>
 
       <form id="login-form" class="login-form">
-        <label for="username">Username <span class="admin-optional">agents only</span></label>
-        <div class="input-wrap"><svg class="icon input-icon"><use href="#i-user"></use></svg><input id="username" name="username" autocomplete="username" placeholder="e.g. viewer-alice"></div>
-
-        <label for="credential">Credential or admin token</label>
+        <label for="credential">Administrator credential</label>
         <div class="input-wrap has-toggle">
           <svg class="icon input-icon"><use href="#i-lock"></use></svg>
-          <input id="credential" name="credential" type="password" autocomplete="current-password" placeholder="Paste your credential" required>
+          <input id="credential" name="credential" type="password" autocomplete="current-password" placeholder="Paste your ADMIN_TOKENS value" required>
           <button id="toggle-credential" class="input-toggle" type="button" aria-label="Show credential"><svg class="icon eye-open"><use href="#i-eye"></use></svg><svg class="icon eye-closed"><use href="#i-eye-off"></use></svg></button>
         </div>
 
-        <button id="login-submit" class="primary-button wide" type="submit"><span>Sign in to memory space</span><svg class="icon"><use href="#i-arrow"></use></svg></button>
+        <button id="login-submit" class="primary-button wide" type="submit"><span>Sign in to console</span><svg class="icon"><use href="#i-arrow"></use></svg></button>
         <p id="login-error" class="form-error" role="alert" hidden></p>
       </form>
 
-      <div class="privacy-note"><svg class="icon"><use href="#i-shield"></use></svg><span>The token stays in memory for this tab only and is cleared when you sign out or close the page. Administrators: the username field is ignored when an admin token is used.</span></div>
-      <div class="login-card-foot">Need access? Ask an administrator for a credential with the <code>read</code> scope, or sign in above to issue one.</div>
+      <div class="privacy-note"><svg class="icon"><use href="#i-shield"></use></svg><span>The credential is stored in an HttpOnly, SameSite cookie — JavaScript cannot read it. Your session survives a refresh; use <strong>Sign out</strong> to clear it. Serve the console over HTTPS.</span></div>
+      <div class="login-card-foot">The credential is the <code>ADMIN_TOKENS</code> value from your server <code>.env</code>. It is never committed to the repository.</div>
     </div>
   </div>
 
@@ -138,7 +136,7 @@
       <button class="nav-item active" type="button" data-view="memories"><svg class="icon"><use href="#i-grid"></use></svg><span>Memories</span><span class="nav-hint">01</span></button>
       <button class="nav-item" type="button" data-view="discussions"><svg class="icon"><use href="#i-chat"></use></svg><span>Discussions</span><span class="nav-hint">02</span></button>
       <button class="nav-item" type="button" data-view="about"><svg class="icon"><use href="#i-info"></use></svg><span>About</span><span class="nav-hint">03</span></button>
-      <button class="nav-item" id="nav-admin" type="button" data-view="admin" hidden><svg class="icon"><use href="#i-shield"></use></svg><span>Admin</span><span class="nav-hint">04</span></button>
+      <button class="nav-item" id="nav-admin" type="button" data-view="admin"><svg class="icon"><use href="#i-shield"></use></svg><span>Admin</span><span class="nav-hint">04</span></button>
     </nav>
 
     <div class="side-spacer"></div>
@@ -147,10 +145,10 @@
       <div class="side-card-title"><svg class="icon"><use href="#i-database"></use></svg> Current space</div>
       <div class="side-row"><span>Tenant</span><strong id="side-tenant">—</strong></div>
       <div class="side-row"><span>Signed in as</span><strong id="side-agent">—</strong></div>
-      <div class="side-row"><span>Access</span><strong class="accent-teal" id="side-access">read only</strong></div>
+      <div class="side-row"><span>Access</span><strong class="accent-teal" id="side-access">full access</strong></div>
     </div>
 
-    <div class="side-foot" id="side-foot"><span class="pulse-dot"></span> v0.5.0 · read-only viewer</div>
+    <div class="side-foot" id="side-foot"><span class="pulse-dot"></span> v0.6.0 · full access</div>
   </aside>
 
   <div class="app-main">
@@ -244,7 +242,7 @@
       </div>
       <div class="about-grid">
         <article class="about-card"><span class="about-icon violet"><svg class="icon"><use href="#i-layers"></use></svg></span><h3>One tenant, one space</h3><p>Every request resolves to a <code>(tenant_id, agent_id)</code> identity. Queries are always scoped to the tenant, so other spaces are never visible from here.</p></article>
-        <article class="about-card"><span class="about-icon teal"><svg class="icon"><use href="#i-shield"></use></svg></span><h3>Read-only by design</h3><p>This viewer only accepts a managed credential with the <code>read</code> scope. It cannot create, edit or delete memories, and the credential never leaves this tab.</p></article>
+        <article class="about-card"><span class="about-icon teal"><svg class="icon"><use href="#i-shield"></use></svg></span><h3>One account, full control</h3><p>A single administrator credential opens every workspace: reading, deleting memories and managing agent tokens. The session lives in an HttpOnly cookie, so a refresh keeps you signed in; JavaScript never sees the token.</p></article>
         <article class="about-card"><span class="about-icon amber"><svg class="icon"><use href="#i-plug"></use></svg></span><h3>Two interfaces</h3><p>Agents use the REST API or the MCP server (Streamable HTTP and stdio). This browser is a third, human-facing window onto the same database.</p></article>
         <article class="about-card"><span class="about-icon rose"><svg class="icon"><use href="#i-database"></use></svg></span><h3>Portable storage</h3><p>SQLite is the default for a single host. Point <code>DATABASE_URL</code> at PostgreSQL to enable Alembic migrations and optional pgvector semantic search.</p></article>
       </div>
@@ -259,8 +257,8 @@
         </ol>
         <p>Agents can call <code>memory_guide</code> for the full contract, <code>memory_agents</code> for everyone's summary at once, and <code>memory_context(detail_level="summary")</code> for the overview plus ready-to-use follow-up calls.</p>
       </article>
-      <div class="about-foot"><svg class="icon"><use href="#i-spark"></use></svg><span>Memories keep their source agent, version and timestamps. Threads are scoped conversations; resolving a thread never rewrites a memory.</span></div>
-      <div class="about-links"><span class="about-links-label">Interfaces</span><code>GET /v1/memory-guide</code><code>GET /v1/agents</code><code>GET /v1/memories</code><code>GET /v1/negotiations</code><code>/health</code><code>MCP · memory_* / negotiation_*</code></div>
+      <div class="about-foot"><svg class="icon"><use href="#i-spark"></use></svg><span>Memories keep their source agent, version and timestamps. Console deletions are soft deletes with an audit entry; resolving a thread never rewrites a memory.</span></div>
+      <div class="about-links"><span class="about-links-label">Interfaces</span><code>GET /v1/memory-guide</code><code>GET /v1/agents</code><code>GET /v1/memories</code><code>DELETE /v1/admin/memories/{id}</code><code>GET /viewer/session</code><code>POST /viewer/logout</code><code>MCP · memory_* / negotiation_*</code></div>
     </section>
 
     <!-- Administration -->
@@ -269,9 +267,9 @@
         <div>
           <div class="eyebrow"><span class="eyebrow-bar"></span> ADMINISTRATION</div>
           <h1>Agents &amp; access tokens</h1>
-          <p class="lead">Issue one dedicated MCP credential per agent, then revoke, rotate or remove it. Sharing a token makes every agent the same identity. To browse memories, sign in with a read-only credential in another tab.</p>
+          <p class="lead">Issue one dedicated MCP credential per agent, then revoke, rotate or remove it. Sharing a token makes every agent the same identity. The same account also browses and deletes memories — no second sign-in needed.</p>
         </div>
-        <span class="readonly-pill"><svg class="icon"><use href="#i-shield"></use></svg> Administrator</span>
+        <span class="readonly-pill"><svg class="icon"><use href="#i-shield"></use></svg> Full access</span>
       </div>
 
       <div class="admin-layout">
@@ -330,11 +328,11 @@
     <button class="mobile-nav-item active" type="button" data-view="memories"><svg class="icon"><use href="#i-grid"></use></svg><span>Memories</span></button>
     <button class="mobile-nav-item" type="button" data-view="discussions"><svg class="icon"><use href="#i-chat"></use></svg><span>Threads</span></button>
     <button class="mobile-nav-item" type="button" data-view="about"><svg class="icon"><use href="#i-info"></use></svg><span>About</span></button>
-    <button class="mobile-nav-item" id="mobile-nav-admin" type="button" data-view="admin" hidden><svg class="icon"><use href="#i-shield"></use></svg><span>Admin</span></button>
+    <button class="mobile-nav-item" id="mobile-nav-admin" type="button" data-view="admin"><svg class="icon"><use href="#i-shield"></use></svg><span>Admin</span></button>
   </nav>
 </div>
 
 <div id="toast-stack" class="toast-stack" aria-live="polite"></div>
-<script src="assets/app.js?v=0.5.0" defer></script>
+<script src="assets/app.js?v=0.6.0" defer></script>
 </body>
 </html>

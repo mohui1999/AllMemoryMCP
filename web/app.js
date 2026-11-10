@@ -2,10 +2,9 @@
   "use strict";
 
   const state = {
-    credential: null,
+    signedIn: false,
     username: null,
     tenantId: null,
-    role: "viewer",
     credentials: [],
     showRevoked: false,
     view: "memories",
@@ -117,13 +116,17 @@
   }
 
   // -- Network -------------------------------------------------------------
+  // The credential lives in an HttpOnly session cookie set by /viewer/login.
+  // No token is kept in JavaScript, so a page refresh restores the session.
   async function request(url, options = {}) {
     const headers = new Headers(options.headers || {});
-    if (state.credential) headers.set("Authorization", `Bearer ${state.credential}`);
-    const response = await fetch(url, { ...options, headers, cache: "no-store" });
+    headers.set("X-AllMemory-Web", "1");
+    const response = await fetch(url, {
+      ...options, headers, cache: "no-store", credentials: "same-origin",
+    });
     const data = response.status === 204 ? null : await response.json().catch(() => null);
     if (!response.ok) {
-      if (response.status === 401) logout(true);
+      if (response.status === 401) void logout(true);
       throw new Error(apiError(data, `Request failed (${response.status})`));
     }
     return data;
@@ -155,31 +158,29 @@
 
   function switchView(name) {
     if (!VIEW_TITLES[name]) return;
-    // An admin token authenticates admin routes only; sending it to the agent
-    // memory routes would return 401 and end the session.
-    if (state.role === "admin" && (name === "memories" || name === "discussions")) return;
-    if (name === "admin" && state.role !== "admin") return;
     state.view = name;
     updateViewUI();
     if (name === "discussions" && !state.threadLoaded) loadThreads();
     if (name === "admin") loadCredentials();
   }
 
-  function sessionChrome(isAdmin) {
-    $("nav-admin").hidden = !isAdmin;
-    $("mobile-nav-admin").hidden = !isAdmin;
+  function sessionChrome() {
+    // One account: browsing, deletion and agent administration all share the
+    // same session, so no navigation entry is ever hidden by a role.
+    $("nav-admin").hidden = false;
+    $("mobile-nav-admin").hidden = false;
     document.querySelectorAll('[data-view="memories"], [data-view="discussions"]')
-      .forEach((button) => { button.hidden = isAdmin; });
-    $("access-badge").textContent = isAdmin ? "ADMIN" : "READ-ONLY";
-    $("side-access").textContent = isAdmin ? "administrator" : "read only";
+      .forEach((button) => { button.hidden = false; });
+    $("access-badge").textContent = "FULL ACCESS";
+    $("side-access").textContent = "administrator";
     $("side-foot").replaceChildren(
       el("span", "pulse-dot"),
-      document.createTextNode(isAdmin ? " v0.4.0 · administrator" : " v0.4.0 · read-only viewer")
+      document.createTextNode(" v0.6.0 · full access")
     );
   }
 
   function showViewer(data) {
-    state.role = data.role === "admin" ? "admin" : "viewer";
+    state.signedIn = true;
     state.username = data.username;
     state.tenantId = data.tenant_id === "*" ? "all tenants" : (data.tenant_id || "default");
     $("login-view").hidden = true;
@@ -190,15 +191,37 @@
     $("side-tenant").textContent = state.tenantId;
     $("profile-avatar").textContent = initials(state.username);
     $("profile-avatar").style.background = avatarStyle(state.username);
-    sessionChrome(state.role === "admin");
-    switchView(state.role === "admin" ? "admin" : "memories");
+    sessionChrome();
+    switchView("memories");
   }
 
-  function logout(showLoginError = false) {
-    state.credential = null;
+  async function enterConsole(data) {
+    showViewer(data);
+    await Promise.all([loadMemories(), loadThreads()]);
+  }
+
+  async function restoreSession() {
+    // A refresh must not ask for the token again. This is a plain fetch so a
+    // missing/expired session stays silent instead of showing a login error.
+    try {
+      const response = await fetch("viewer/session", {
+        credentials: "same-origin", cache: "no-store",
+      });
+      if (!response.ok) return;
+      await enterConsole(await response.json());
+    } catch (error) { /* stay on the sign-in screen */ }
+  }
+
+  async function logout(showLoginError = false) {
+    try {
+      await fetch("viewer/logout", {
+        method: "POST", headers: { "X-AllMemory-Web": "1" },
+        credentials: "same-origin", cache: "no-store",
+      });
+    } catch (error) { /* local state is cleared regardless */ }
+    state.signedIn = false;
     state.username = null;
     state.tenantId = null;
-    state.role = "viewer";
     state.credentials = [];
     state.showRevoked = false;
     state.items = [];
@@ -224,11 +247,11 @@
     $("admin-error").hidden = true;
     $("admin-issue-error").hidden = true;
     $("admin-show-revoked").checked = false;
-    sessionChrome(false);
+    sessionChrome();
     state.view = "memories";
     updateViewUI();
     $("login-error").textContent = showLoginError
-      ? "The credential is no longer valid. Ask your administrator for a new read-only credential." : "";
+      ? "Your session has ended. Sign in again with the administrator credential." : "";
     $("login-error").hidden = !showLoginError;
   }
 
@@ -372,7 +395,19 @@
     copy.type = "button";
     copy.append(icon("copy"), el("span", "", "Copy memory ID"));
     copy.addEventListener("click", () => copyText(item.id));
-    actions.append(copy);
+    const remove = el("button", "secondary-button danger");
+    remove.type = "button";
+    remove.append(icon("trash"), el("span", "", "Delete memory"));
+    remove.addEventListener("click", async () => {
+      const owner = item.owner_agent_id || "unknown agent";
+      if (!window.confirm(`Delete this memory from ${owner}? It is soft-deleted, keeps its revision history and is recorded in the audit log.`)) return;
+      const result = await adminRequest(`v1/admin/memories/${encodeURIComponent(item.id)}`, "DELETE");
+      if (!result) return;
+      toast("Memory deleted");
+      state.selectedId = null;
+      await loadMemories();
+    });
+    actions.append(copy, remove);
     body.append(actions);
     panel.append(body);
   }
@@ -513,7 +548,7 @@
       renderList();
       renderStats();
     } catch (error) {
-      if (state.credential) {
+      if (state.signedIn) {
         $("load-error").textContent = error.message;
         $("load-error").hidden = false;
       }
@@ -666,7 +701,7 @@
       renderThreadList();
       renderStats();
     } catch (error) {
-      if (state.credential) {
+      if (state.signedIn) {
         $("thread-error").textContent = error.message;
         $("thread-error").hidden = false;
       }
@@ -715,14 +750,14 @@
   }
 
   async function loadCredentials() {
-    if (state.role !== "admin" || !state.credential) return;
+    if (!state.signedIn) return;
     $("admin-error").hidden = true;
     try {
       const data = await request(`v1/admin/credentials?include_revoked=${state.showRevoked}`);
       state.credentials = (data && data.items) || [];
       renderCredentials();
     } catch (error) {
-      if (state.credential) {
+      if (state.signedIn) {
         $("admin-error").textContent = error.message;
         $("admin-error").hidden = false;
       }
@@ -854,7 +889,6 @@
 
   $("login-form").addEventListener("submit", async (event) => {
     event.preventDefault();
-    const username = $("username").value.trim() || "admin";
     const credential = $("credential").value.trim();
     const button = $("login-submit");
     const label = button.querySelector("span");
@@ -864,25 +898,24 @@
     try {
       const response = await fetch("viewer/login", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username, credential }),
+        headers: { "Content-Type": "application/json", "X-AllMemory-Web": "1" },
+        body: JSON.stringify({ credential }),
         cache: "no-store",
+        credentials: "same-origin",
       });
       const data = await response.json().catch(() => ({}));
-      if (!response.ok) throw new Error(apiError(data, "Sign-in failed. Check your username and credential."));
-      state.credential = credential;
-      showViewer(data);
-      if (state.role !== "admin") await Promise.all([loadMemories(), loadThreads()]);
+      if (!response.ok) throw new Error(apiError(data, "Sign-in failed. Check your administrator credential."));
+      await enterConsole(data);
     } catch (error) {
       $("login-error").textContent = error.message;
       $("login-error").hidden = false;
     } finally {
       button.disabled = false;
-      label.textContent = "Sign in to memory space";
+      label.textContent = "Sign in to console";
     }
   });
 
-  $("logout-button").addEventListener("click", () => logout(false));
+  $("logout-button").addEventListener("click", () => { void logout(false); });
   document.querySelectorAll("[data-view]").forEach((button) => {
     button.addEventListener("click", () => switchView(button.dataset.view));
   });
@@ -958,4 +991,5 @@
     placeholder("Select a discussion", "The conversation timeline and participants appear here.", "chat")
   );
   probeHealth();
+  restoreSession();
 })();

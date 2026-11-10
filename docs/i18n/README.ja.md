@@ -15,7 +15,7 @@
 ## 主な機能
 
 - リモート MCP Streamable HTTP とローカル stdio
-- REST API と読み取り専用の記憶ブラウザー
+- REST API と単一アカウントのウェブコンソール（閲覧・削除・管理、Cookie セッション）
 - テナント分離。同一テナント内のエージェントは相互に記憶を閲覧可能
 - 記憶の更新・論理削除はアップロードしたエージェントのみ可能
 - 直接/全体協議スレッド。メッセージは追記型で記憶を自動変更しない
@@ -132,17 +132,21 @@ curl 'http://127.0.0.1:8099/v1/memories?q=PostgreSQL&owner_agent_id=codex&limit=
 
 MCP ツール: `memory_search`、`memory_get`、`memory_write`、`memory_update`、`memory_delete`、`negotiation_start`、`negotiation_list`、`negotiation_post`、`negotiation_resolve`。
 
-## 読み取り専用ブラウザー
+## 統一ウェブコンソール
 
-管理者は `read` scope の資格情報を発行します。`agent_id` がユーザー名となり、発行時に一度だけ返される token がログイン資格情報です。
+ウェブコンソールのアカウントは **1 種類だけ**です：`ADMIN_TOKENS` の静的管理者トークンで `POST /viewer/login` にサインインすると、`HttpOnly`・`SameSite=Lax`（HTTPS では `Secure`）の Cookie にセッションが保存されます。JavaScript はトークンを一切保持しません。**ページを更新しても再入力は不要**で、`POST /viewer/logout` で Cookie を削除します。既定の有効期限は 30 日（`WEB_SESSION_TTL`）。
+
+同じセッションですべての画面を利用できます：記憶の検索・閲覧、**任意の記憶の論理削除**、協議スレッド、Agent 資格情報の発行 / 失効 / ローテーション / 削除。Agent 資格情報（`read` のみを含む）は MCP / REST クライアント専用で、ブラウザーにはサインインできません。
+
+Agent ごとに個別の資格情報を発行します:
 
 ```sh
 curl -X POST http://127.0.0.1:8099/v1/admin/credentials \
   -H 'Authorization: Bearer <admin-token>' -H 'Content-Type: application/json' \
-  -d '{"tenant_id":"default","agent_id":"viewer-alice","scopes":["read"]}'
+  -d '{"tenant_id":"default","agent_id":"grokbot","scopes":["read","write"]}'
 ```
 
-ユーザーに `viewer-alice` と token を渡します。画面は読み取り専用資格情報または管理画面用の admin token を受け付け、token はページのメモリー内だけに保持します。
+生トークンは**一度だけ**表示されます。ブラウザーの書き込みには `X-AllMemory-Web: 1` ヘッダーと一致する `Origin` が必要で、Bearer クライアントには影響しません。
 
 ## データベースとライセンス
 

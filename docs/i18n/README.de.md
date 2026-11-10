@@ -15,7 +15,7 @@ Lies dieses GitHub-Repository, installiere und deploye es für mich und führe m
 ## Funktionen
 
 - Remote-MCP über Streamable HTTP und lokale stdio-Anbindung
-- REST-API und schreibgeschützte Weboberfläche
+- REST-API und Webkonsole mit einem Konto (Lesen, Löschen, Verwaltung, Cookie-Sitzung)
 - Mandantentrennung; alle Agenten eines Mandanten dürfen dessen Erinnerungen lesen
 - Nur der Uploader darf eine Erinnerung ändern oder logisch löschen
 - Direkte und globale Verhandlungs-Threads mit nur anhängbaren Nachrichten
@@ -131,17 +131,21 @@ curl 'http://127.0.0.1:8099/v1/memories?q=PostgreSQL&owner_agent_id=codex&limit=
 
 MCP-Tools: `memory_search`, `memory_get`, `memory_write`, `memory_update`, `memory_delete`, `negotiation_start`, `negotiation_list`, `negotiation_post`, `negotiation_resolve`.
 
-## Schreibgeschützte Benutzeroberfläche
+## Einheitliche Webkonsole
 
-Ein Administrator oder berechtigter Betreiber stellt Zugangsdaten mit ausschließlich `read`-Scope aus. `agent_id` ist der Benutzername; das einmalig ausgegebene Token ist das Anmeldekennwort.
+Die Weboberfläche hat **nur ein Konto**: ein statischer `ADMIN_TOKENS`-Administrator-Token. `POST /viewer/login` speichert ihn in einem `HttpOnly`-, `SameSite=Lax`-Cookie (bei HTTPS `Secure`). JavaScript sieht den Token nie; **nach einem Refresh bleibt die Sitzung bestehen**, `POST /viewer/logout` löscht das Cookie. Standardlaufzeit: 30 Tage (`WEB_SESSION_TTL`).
+
+Dieselbe Sitzung öffnet alle Bereiche: Suche und Ansicht von Erinnerungen, **logisches Löschen beliebiger Erinnerungen**, Verhandlungs-Threads sowie Ausstellen / Sperren / Rotieren / Entfernen von Agent-Zugangsdaten. Agent-Credentials (auch reine `read`-Tokens) sind ausschließlich für MCP/REST-Clients und können sich nicht im Browser anmelden.
+
+Für jeden Agent wird ein eigener Credential ausgestellt:
 
 ```sh
 curl -X POST http://127.0.0.1:8099/v1/admin/credentials \
   -H 'Authorization: Bearer <admin-token>' -H 'Content-Type: application/json' \
-  -d '{"tenant_id":"default","agent_id":"viewer-alice","scopes":["read"]}'
+  -d '{"tenant_id":"default","agent_id":"grokbot","scopes":["read","write"]}'
 ```
 
-Geben Sie `viewer-alice` und das Token an den Benutzer weiter. Die Weboberfläche akzeptiert Read-only-Zugangsdaten oder ein Admin-Token für die Verwaltungsoberfläche und hält das Token nur im Arbeitsspeicher der Seite.
+Der Klartext-Token erscheint **nur einmal**. Browser-Schreibzugriffe benötigen zusätzlich den Header `X-AllMemory-Web: 1` und einen passenden `Origin`; Bearer-Clients sind ausgenommen.
 
 ## Datenbank und Lizenz
 

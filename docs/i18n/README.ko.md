@@ -15,7 +15,7 @@
 ## 기능
 
 - 원격 MCP Streamable HTTP 및 로컬 stdio 연결
-- REST API와 읽기 전용 메모리 브라우저
+- REST API와 단일 계정 웹 콘솔(조회·삭제·관리, 쿠키 세션)
 - 테넌트 격리, 업로더 표시, 소유자만 수정/소프트 삭제
 - 직접/전체 협의 스레드와 추가 전용 메시지
 - scope, 만료, 폐기, 교체를 지원하는 관리형 자격 증명
@@ -130,17 +130,21 @@ curl 'http://127.0.0.1:8099/v1/memories?q=PostgreSQL&owner_agent_id=codex&limit=
 
 MCP 도구: `memory_search`, `memory_get`, `memory_write`, `memory_update`, `memory_delete`, `negotiation_start`, `negotiation_list`, `negotiation_post`, `negotiation_resolve`.
 
-## 읽기 전용 사용자 화면
+## 통합 웹 콘솔
 
-관리자 또는 권한이 있는 운영자는 `read` scope만 있는 자격 증명을 발급합니다. `agent_id`가 사용자 이름이며 발급 시 반환되는 token이 로그인 자격 증명입니다.
+웹 콘솔 계정은 **하나뿐**입니다. `ADMIN_TOKENS` 관리자 토큰으로 `POST /viewer/login`에 로그인하면 `HttpOnly`·`SameSite=Lax`(HTTPS에서는 `Secure`) 쿠키에 세션이 저장됩니다. JavaScript는 토큰을 보관하지 않으며, **새로 고침해도 다시 입력할 필요가 없습니다.** `POST /viewer/logout`으로 쿠키를 삭제합니다. 기본 유효 기간은 30일(`WEB_SESSION_TTL`)입니다.
+
+같은 세션에서 기억 검색·조회, **임의 기억 삭제**, 협의 스레드, Agent 자격 증명 발급 / 취소 / 교체 / 삭제를 모두 사용할 수 있습니다. Agent 자격 증명(`read` 전용 포함)은 MCP / REST 클라이언트 전용이며 웹 로그인에는 사용할 수 없습니다.
+
+Agent마다 별도 자격 증명을 발급합니다:
 
 ```sh
 curl -X POST http://127.0.0.1:8099/v1/admin/credentials \
   -H 'Authorization: Bearer <admin-token>' -H 'Content-Type: application/json' \
-  -d '{"tenant_id":"default","agent_id":"viewer-alice","scopes":["read"]}'
+  -d '{"tenant_id":"default","agent_id":"grokbot","scopes":["read","write"]}'
 ```
 
-사용자에게 `viewer-alice`와 token을 전달합니다. 화면은 읽기 전용 자격 증명 또는 관리자 토큰을 허용하며 token은 현재 페이지 메모리에만 저장합니다.
+원본 token은 **한 번만** 표시됩니다. 웹 쓰기 요청에는 `X-AllMemory-Web: 1` 헤더와 일치하는 `Origin`이 필요하며 Bearer 클라이언트에는 영향이 없습니다.
 
 ## 데이터베이스 및 라이선스
 

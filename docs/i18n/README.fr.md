@@ -15,7 +15,7 @@ Lis ce dépôt GitHub, installe-le et déploie-le pour moi, puis guide-moi pas �
 ## Fonctionnalités
 
 - MCP distant via Streamable HTTP et pont local stdio
-- API REST et interface Web en lecture seule
+- API REST et console Web à compte unique (lecture, suppression, administration, session par cookie)
 - Isolation par tenant et attribution de chaque souvenir à son agent source
 - Seul l’agent propriétaire peut modifier ou supprimer logiquement son souvenir
 - Discussions directes ou globales avec messages ajoutés sans écrasement
@@ -131,17 +131,21 @@ curl 'http://127.0.0.1:8099/v1/memories?q=PostgreSQL&owner_agent_id=codex&limit=
 
 Outils MCP : `memory_search`, `memory_get`, `memory_write`, `memory_update`, `memory_delete`, `negotiation_start`, `negotiation_list`, `negotiation_post`, `negotiation_resolve`.
 
-## Interface utilisateur en lecture seule
+## Console Web unifiée
 
-Un administrateur ou opérateur autorisé émet un identifiant avec le scope `read` uniquement. `agent_id` sert de nom d’utilisateur ; le jeton renvoyé une seule fois est le secret de connexion.
+La console Web n'a **qu'un seul compte** : un jeton administrateur statique `ADMIN_TOKENS`. `POST /viewer/login` le stocke dans un cookie `HttpOnly`, `SameSite=Lax` (`Secure` en HTTPS). JavaScript ne voit jamais le jeton ; **un rechargement de page ne demande pas de nouvelle saisie**, et `POST /viewer/logout` efface le cookie. Durée par défaut : 30 jours (`WEB_SESSION_TTL`).
+
+La même session donne accès à tous les espaces : recherche et lecture des mémoires, **suppression logique de n'importe quelle mémoire**, fils de négociation, et émission / révocation / rotation / suppression des identifiants d'agent. Les identifiants d'agent (y compris `read` seul) sont réservés aux clients MCP/REST et ne permettent pas de se connecter au navigateur.
+
+Émettez un identifiant distinct par agent :
 
 ```sh
 curl -X POST http://127.0.0.1:8099/v1/admin/credentials \
   -H 'Authorization: Bearer <admin-token>' -H 'Content-Type: application/json' \
-  -d '{"tenant_id":"default","agent_id":"viewer-alice","scopes":["read"]}'
+  -d '{"tenant_id":"default","agent_id":"grokbot","scopes":["read","write"]}'
 ```
 
-Remettez `viewer-alice` et le jeton à l’utilisateur. L’interface accepte un identifiant en lecture seule ou un jeton admin pour la console d’administration, et conserve le jeton uniquement en mémoire pendant la session de la page.
+Le jeton en clair n'apparaît **qu'une fois**. Les écritures du navigateur exigent l'en-tête `X-AllMemory-Web: 1` et un `Origin` concordant ; les clients Bearer ne sont pas concernés.
 
 ## Base de données et licence
 

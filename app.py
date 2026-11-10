@@ -1,30 +1,97 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Annotated
+from urllib.parse import urlsplit
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Query
+from fastapi import Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
 from memory_service import (
-    InvalidInput, Principal, ScopeError, VersionConflict, authenticate, create_memory,
-    create_timeline_memory, delete_memory, get_agent_summary, get_memory,
-    get_memory_context, get_thread, initialize, list_agents, list_categories,
-    list_memory_revisions, list_threads, memory_guide, post_message,
-    reindex_memory_chunks, resolve_thread, search_memories, start_thread,
-    update_memory, update_event_memory, upsert_agent_summary, upsert_event_memory,
+    InvalidInput, Principal, ScopeError, VersionConflict, admin_delete_memory,
+    authenticate, create_memory, create_timeline_memory, delete_memory,
+    get_agent_summary, get_memory, get_memory_context, get_thread, initialize,
+    list_agents, list_categories, list_memory_revisions, list_threads,
+    memory_guide, post_message, reindex_memory_chunks, resolve_thread,
+    search_memories, start_thread, update_memory, update_event_memory,
+    upsert_agent_summary, upsert_event_memory,
 )
 from credentials import (
     authenticate_admin, delete_credential, issue_credential, list_credentials,
-    revoke_credential, rotate_credential, verify_token,
+    revoke_credential, rotate_credential,
 )
 
-app = FastAPI(title="AllMemoryMCP API", version="0.5.0",
+app = FastAPI(title="AllMemoryMCP API", version="0.6.0",
               description="Global cross-agent memory and negotiation API (multi-tenant)")
 WEB_DIR = Path(__file__).parent / "web"
 app.mount("/assets", StaticFiles(directory=WEB_DIR), name="viewer-assets")
+
+# The browser console has ONE kind of account: an administrator credential from
+# ADMIN_TOKENS. Signing in stores it in an HttpOnly cookie so a refresh keeps
+# the session; JavaScript never sees the raw token again.
+SESSION_COOKIE = "allmemory_session"
+CSRF_HEADER = "x-allmemory-web"
+
+
+def session_ttl() -> int:
+    try:
+        return max(300, min(int(os.getenv("WEB_SESSION_TTL", "2592000")), 31_536_000))
+    except ValueError:
+        return 2_592_000
+
+
+def session_tenant() -> str:
+    return os.getenv("WEB_ADMIN_TENANT", "default").strip() or "default"
+
+
+def cookie_secure(request: Request) -> bool:
+    """Secure on HTTPS, with an env override for reverse-proxy deployments."""
+    override = os.getenv("WEB_COOKIE_SECURE", "auto").strip().lower()
+    if override in ("1", "true", "yes", "on"):
+        return True
+    if override in ("0", "false", "no", "off"):
+        return False
+    forwarded = request.headers.get("x-forwarded-proto", "").split(",")[0].strip().lower()
+    return forwarded == "https" or request.url.scheme == "https"
+
+
+def web_identity(token: str | None) -> Principal | None:
+    """Map an ADMIN_TOKENS credential to the console's single unified identity."""
+    admin = authenticate_admin(token)
+    if not admin:
+        return None
+    # Memory queries need a concrete tenant; credential management stays
+    # cross-tenant because it is gated by the admin scope, not tenant_id.
+    return Principal(tenant_id=session_tenant(), agent_id=admin.agent_id,
+                     scopes=("read", "write", "admin"))
+
+
+@app.middleware("http")
+async def browser_session_guard(request: Request, call_next):
+    """CSRF protection for requests authenticated by the session cookie.
+
+    Bearer clients (Agents / MCP) are untouched. A cross-site page cannot forge
+    the custom header without a CORS preflight, and an explicit Origin, when
+    present, must match the host serving the console.
+    """
+    if (request.method in ("POST", "PUT", "PATCH", "DELETE")
+            and not request.headers.get("authorization")
+            and SESSION_COOKIE in request.cookies
+            and request.url.path != "/viewer/login"):
+        if request.headers.get(CSRF_HEADER) != "1":
+            return JSONResponse(status_code=403, content={
+                "detail": "Browser session writes require the X-AllMemory-Web header"})
+        origin = request.headers.get("origin")
+        if origin:
+            host = (request.headers.get("x-forwarded-host")
+                    or request.headers.get("host") or "").lower()
+            if urlsplit(origin).netloc.lower() != host:
+                return JSONResponse(status_code=403, content={
+                    "detail": "Request origin does not match this host"})
+    return await call_next(request)
 
 
 @app.exception_handler(ScopeError)
@@ -49,12 +116,20 @@ def startup() -> None:
     initialize()
 
 
-def current_principal(authorization: Annotated[str | None, Header()] = None) -> Principal:
+def current_principal(request: Request,
+                      authorization: Annotated[str | None, Header()] = None) -> Principal:
+    """Accept an Agent bearer token or the browser console's session cookie."""
     scheme, _, token = (authorization or "").partition(" ")
-    principal = authenticate(token if scheme.lower() == "bearer" else None)
-    if not principal:
-        raise HTTPException(status_code=401, detail="Provide a valid Agent bearer token")
-    return principal
+    if scheme.lower() == "bearer":
+        principal = authenticate(token.strip())
+        if principal:
+            return principal
+    else:
+        principal = web_identity(request.cookies.get(SESSION_COOKIE))
+        if principal:
+            return principal
+    raise HTTPException(status_code=401,
+                        detail="Provide a valid Agent bearer token or sign in to the console")
 
 
 class MemoryWrite(BaseModel):
@@ -122,8 +197,15 @@ class ResolveThread(BaseModel):
 
 
 class ViewerLogin(BaseModel):
-    username: str = Field(min_length=1, max_length=128)
+    # `username` is accepted but ignored: the console has one account type and
+    # the identity comes from the ADMIN_TOKENS entry that matches the token.
     credential: str = Field(min_length=20, max_length=512)
+    username: str | None = Field(default=None, max_length=128)
+
+
+def session_payload(principal: Principal) -> dict:
+    return {"username": principal.agent_id, "tenant_id": principal.tenant_id,
+            "scopes": list(principal.scopes), "role": "admin", "session": True}
 
 
 @app.get("/", include_in_schema=False)
@@ -132,23 +214,42 @@ def viewer_page():
 
 
 @app.post("/viewer/login")
-def viewer_login(body: ViewerLogin):
-    """Sign in as a read-only viewer, or as an administrator (admin console).
+def viewer_login(body: ViewerLogin, request: Request):
+    """Sign in to the unified console with an ADMIN_TOKENS credential.
 
-    Admin tokens come from ADMIN_TOKENS and are never stored in the credential
-    table. The browser keeps either token in memory only; the role in the
-    response tells the viewer which panels to expose.
+    On success the raw token is placed in an HttpOnly, SameSite=Lax cookie and
+    is never returned to JavaScript. The same identity can browse, delete and
+    administer; there is no separate viewer role.
     """
-    admin = authenticate_admin(body.credential)
-    if admin:
-        return {"username": admin.agent_id, "tenant_id": admin.tenant_id,
-                "role": "admin"}
-    principal = verify_token(body.credential)
-    if (not principal or principal.agent_id != body.username or "read" not in principal.scopes
-            or "write" in principal.scopes or "admin" in principal.scopes):
-        raise HTTPException(status_code=401, detail="Invalid username or read-only credential")
-    return {"username": principal.agent_id, "tenant_id": principal.tenant_id,
-            "role": "viewer"}
+    credential = body.credential.strip()
+    identity = web_identity(credential)
+    if not identity:
+        raise HTTPException(status_code=401, detail="Invalid administrator credential")
+    response = JSONResponse({**session_payload(identity),
+                             "expires_in": session_ttl()})
+    response.set_cookie(
+        SESSION_COOKIE, credential, max_age=session_ttl(), path="/",
+        httponly=True, secure=cookie_secure(request), samesite="lax",
+    )
+    return response
+
+
+@app.get("/viewer/session")
+def viewer_session(request: Request):
+    """Restore the console after a page refresh without re-entering the token."""
+    identity = web_identity(request.cookies.get(SESSION_COOKIE))
+    if not identity:
+        raise HTTPException(status_code=401, detail="No active browser session")
+    return session_payload(identity)
+
+
+@app.post("/viewer/logout")
+def viewer_logout(request: Request):
+    """Clear the HttpOnly session cookie (the token itself is never stored client-side)."""
+    response = JSONResponse({"logged_out": True})
+    response.delete_cookie(SESSION_COOKIE, path="/", httponly=True,
+                           secure=cookie_secure(request), samesite="lax")
+    return response
 
 
 @app.get("/health")
@@ -401,11 +502,16 @@ class CredentialIssue(BaseModel):
     expires_at: str | None = None
 
 
-def admin_principal(authorization: Annotated[str | None, Header()] = None) -> Principal:
+def admin_principal(request: Request,
+                    authorization: Annotated[str | None, Header()] = None) -> Principal:
+    """Accept a static admin bearer token or the unified console session."""
     scheme, _, token = (authorization or "").partition(" ")
-    principal = authenticate_admin(token if scheme.lower() == "bearer" else None)
-    if not principal:
-        raise HTTPException(status_code=401, detail="Provide a valid admin bearer token")
+    if scheme.lower() == "bearer":
+        principal = authenticate_admin(token.strip())
+    else:
+        principal = web_identity(request.cookies.get(SESSION_COOKIE))
+    if not principal or "admin" not in principal.scopes:
+        raise HTTPException(status_code=401, detail="Provide a valid admin credential")
     return principal
 
 
@@ -456,3 +562,17 @@ def admin_reindex(batch_size: int = Query(default=200, ge=1, le=1000),
                   _: Principal = Depends(admin_principal)):
     """Rebuild missing/failed chunk vectors after enabling or changing a provider."""
     return reindex_memory_chunks(batch_size)
+
+
+@app.delete("/v1/admin/memories/{memory_id}")
+def admin_memory_delete(memory_id: str,
+                        principal: Principal = Depends(admin_principal)):
+    """Soft-delete a memory from the console, regardless of its uploader.
+
+    Agent clients still go through DELETE /v1/memories/{id}, where only the
+    original uploader may delete. This admin path is audited with the owner.
+    """
+    result = admin_delete_memory(principal, memory_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="Memory not found")
+    return result

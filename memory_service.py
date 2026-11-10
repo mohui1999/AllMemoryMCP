@@ -1267,6 +1267,34 @@ def delete_memory(principal: Principal, memory_id: str) -> bool:
         return True
 
 
+def admin_delete_memory(principal: Principal, memory_id: str) -> dict[str, Any] | None:
+    """Soft-delete any memory as the browser console's unified admin account.
+
+    Agent-facing ``delete_memory`` keeps the uploader-only rule. This separate
+    path is used only by an identity holding the ``admin`` scope, is limited to
+    that identity's tenant (or all tenants for ``*``), and records the original
+    owner in the audit log. It never removes rows or their revision history.
+    """
+    require_scope(principal, "admin")
+    with session() as s:
+        row = s.get(Memory, memory_id)
+        if row is None:
+            row = s.get(StructuredMemory, memory_id)
+        if (row is None or row.deleted_at is not None
+                or (principal.tenant_id != "*" and row.tenant_id != principal.tenant_id)):
+            return None
+        layer = getattr(row, "memory_layer", "legacy")
+        owner = row.owner_agent_id
+        ts = now()
+        row.deleted_at = ts
+        row.updated_at = ts
+        row.version = (row.version or 1) + 1
+        _audit(s, principal, "admin_delete", layer, memory_id,
+               {"owner_agent_id": owner})
+        return {"id": memory_id, "layer": layer, "owner_agent_id": owner,
+                "deleted": True}
+
+
 # --------------------------------------------------------------------------- #
 # Negotiation threads
 # --------------------------------------------------------------------------- #
