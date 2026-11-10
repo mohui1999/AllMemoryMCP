@@ -346,13 +346,14 @@ h1 { font-size: clamp(30px, 3.3vw, 42px); line-height: 1.18; letter-spacing: -1.
 .tag.more { color: var(--faint); }
 
 /* Detail panel ----------------------------------------------------------- */
-.detail-panel, .thread-detail { position: sticky; top: 88px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-l); box-shadow: var(--shadow-sm); overflow: hidden; min-height: 320px; }
+.detail-panel { position: sticky; top: 88px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-l); box-shadow: var(--shadow-sm); overflow-x: hidden; overflow-y: auto; min-height: 320px; max-height: calc(100vh - 108px); }
+.thread-detail { position: sticky; top: 88px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-l); box-shadow: var(--shadow-sm); overflow: hidden; min-height: 320px; }
 .detail-placeholder { display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 54px 28px; min-height: 320px; }
 .placeholder-art { width: 70px; height: 70px; border-radius: 22px; display: grid; place-items: center; color: var(--accent); background: var(--accent-soft); margin-bottom: 18px; border: 1px solid color-mix(in srgb, var(--accent) 15%, transparent); animation: float 6s ease-in-out infinite; }
 .placeholder-art .icon { width: 30px; height: 30px; }
 .detail-placeholder strong { font-size: 14px; font-weight: 680; }
 .detail-placeholder p { color: var(--muted); font-size: 12px; margin: 7px 0 0; max-width: 230px; line-height: 1.7; }
-.detail-head { padding: 20px 22px 18px; background: linear-gradient(135deg, var(--accent-soft), transparent 85%); border-bottom: 1px solid var(--border); }
+.detail-head { padding: 20px 22px 18px; background: linear-gradient(180deg, var(--accent-soft), var(--surface) 62%); border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 2; }
 .detail-kicker { display: flex; align-items: center; gap: 8px; font-size: 10px; font-weight: 750; letter-spacing: 1.4px; color: var(--accent); text-transform: uppercase; }
 .detail-title { font-size: 15px; font-weight: 700; margin: 9px 0 0; letter-spacing: -.2px; }
 .detail-body { padding: 20px 22px 22px; }
@@ -497,7 +498,7 @@ h1 { font-size: clamp(30px, 3.3vw, 42px); line-height: 1.18; letter-spacing: -1.
 }
 @media (max-width: 760px) {
   .content-grid, .thread-layout { grid-template-columns: 1fr; }
-  .detail-panel, .thread-detail { position: static; }
+  .detail-panel, .thread-detail { position: static; max-height: none; }
   .search-bar { grid-template-columns: 1fr; }
   .page-head { align-items: flex-start; flex-direction: column; gap: 12px; }
   .about-grid { grid-template-columns: 1fr; }
